@@ -1,5 +1,7 @@
 import mill._
 import mill.scalalib.publish.{Developer, License, PomSettings, VersionControl}
+import mill.scalalib._
+import mill.scalanativelib._
 import scalalib._
 import $ivy.`de.tototec::de.tobiasroeser.mill.vcs.version::0.4.0`
 import $ivy.`com.github.lolgab::mill-mima::0.0.23`
@@ -9,11 +11,28 @@ import com.github.lolgab.mill.mima._
 
 val dottyVersion = sys.props.get("dottyVersion")
 
-val scalaVersions = List("2.12.17", "2.13.10", "2.11.12", "3.1.1") ++ dottyVersion
+val scalaVersions = List("2.12.17", "2.13.11", "2.11.12", "3.1.1") ++ dottyVersion
 
-object requests extends Cross[RequestsModule](scalaVersions)
-trait RequestsModule extends CrossScalaModule with PublishModule with Mima {
+val scalaNative = "0.5.1"
+
+object requests extends Module {
+  object jvm extends Cross[RequestsJvmModule](scalaVersions)
+  trait RequestsJvmModule extends RequestsModule {
+    object test extends ScalaTests with RequestsTestModule
+  }
+
+  object native extends Cross[RequestsNativeModule](scalaVersions)
+  trait RequestsNativeModule extends RequestsModule with ScalaNativeModule {
+    override def scalaNativeVersion = scalaNative
+    object test extends ScalaNativeTests with RequestsTestModule
+  }
+
+}
+
+trait RequestsModule extends ScalaModule with PlatformScalaModule with CrossScalaModule with PublishModule with Mima {
+
   def publishVersion = VcsVersion.vcsState().format()
+
   def mimaPreviousVersions =
     (
       Seq("0.7.0", "0.7.1", "0.8.2") ++
@@ -35,12 +54,13 @@ trait RequestsModule extends CrossScalaModule with PublishModule with Mima {
     )
   )
 
-  def ivyDeps = Agg(ivy"com.lihaoyi::geny::1.0.0")
+  def ivyDeps = Agg(ivy"com.lihaoyi::geny::1.1.0")
 
-  object test extends ScalaTests with TestModule.Utest {
+  trait RequestsTestModule extends TestModule.Utest {
     def ivyDeps = Agg(
-      ivy"com.lihaoyi::utest::0.7.10",
-      ivy"com.lihaoyi::ujson::1.3.13"
+      ivy"com.lihaoyi::utest::0.8.3",
+      ivy"com.lihaoyi::ujson::3.3.0"
     )
   }
+
 }

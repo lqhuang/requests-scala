@@ -54,11 +54,6 @@ object BaseSession{
 }
 object Requester{
   val officialHttpMethods = Set("GET", "POST", "HEAD", "OPTIONS", "PUT", "DELETE", "TRACE")
-  private lazy val methodField: java.lang.reflect.Field = {
-    val m = classOf[HttpURLConnection].getDeclaredField("method")
-    m.setAccessible(true)
-    m
-  }
 }
 case class Requester(verb: String,
                      sess: BaseSession){

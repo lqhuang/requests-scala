@@ -1,10 +1,7 @@
 package requests
 
-import java.io.{FileInputStream, InputStream, OutputStream}
+import java.io.{InputStream, OutputStream}
 import java.net.URLEncoder
-import java.security.cert.X509Certificate
-
-import javax.net.ssl.{KeyManagerFactory, SSLContext, TrustManager, X509TrustManager}
 
 object Util {
   def transferTo(is: InputStream,

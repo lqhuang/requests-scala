@@ -5,6 +5,30 @@ import scala.scalanative.unsigned._
 import scala.scalanative.meta.LinktimeInfo.isWindows
 import scala.scalanative.unsigned.UInt
 
+private[requests] trait CurlSlist { }
+
+object CurlSlist {
+
+  def empty: Ptr[CurlSlist] = null
+
+  implicit def curlSlistSyntax(slist: Ptr[CurlSlist]): CurlSlistOps = 
+    new CurlSlistOps(slist)
+    
+  final class CurlSlistOps(slist: Ptr[CurlSlist]) {
+
+    private val ccurl = libcurlPlatformCompat.instance
+
+    def append(s: String): Ptr[CurlSlist] = 
+      Zone { implicit z =>
+        ccurl.slistAppend(slist, toCString(s))
+      }
+
+    def free: Unit = 
+      ccurl.slistFree(slist)
+          
+  }
+}
+
 private[requests] trait Curl {}
 
 private[requests] object Curl {
@@ -124,6 +148,12 @@ private[requests] trait CCurl {
 
   @name("curl_url_get")
   def urlGet(url: Ptr[CurlUrl], part: CInt, content: Ptr[Ptr[Byte]], flags: UInt): CInt = extern
+
+  @name("curl_slist_append")
+  def slistAppend(list: Ptr[CurlSlist], string: CString): Ptr[CurlSlist] = extern
+
+  @name("curl_slist_free_all")
+  def slistFree(list: Ptr[CurlSlist]): Unit = extern
 }
 
 private[requests] object CurlCode extends Enumeration {

@@ -1,20 +1,82 @@
 package requests
 
-import scala.scalanative.unsafe.extern
-import scala.scalanative.unsafe.Ptr
-import scala.scalanative.unsafe.CInt
-
 import scala.scalanative.unsafe._
+import scala.scalanative.unsigned._
 import scala.scalanative.meta.LinktimeInfo.isWindows
 import scala.scalanative.unsigned.UInt
 
 private[requests] trait Curl {}
+
+private[requests] object Curl {
+
+  implicit def curlSyntax(curl: Ptr[Curl]): CurlOps = new CurlOps(curl)
+
+  final class CurlOps(curl: Ptr[Curl]) {
+
+    private val ccurl = libcurlPlatformCompat.instance
+
+    def cleanup: Unit = 
+      ccurl.cleanup(curl)
+
+    def perform: CurlCode.CurlCode = 
+      CurlCode(ccurl.perform(curl))
+
+    def setOpt(option: CurlOption.CurlOption, param: Int): CurlCode.CurlCode =
+      CurlCode(ccurl.setoptInt(curl, option.id, param))
+    
+    def setOpt(option: CurlOption.CurlOption, param: Long): CurlCode.CurlCode =
+      CurlCode(ccurl.setoptLong(curl, option.id, param))
+
+    def setOpt(option: CurlOption.CurlOption, param: String)(implicit zone: Zone): CurlCode.CurlCode =
+      CurlCode(ccurl.setoptPtr(curl, option.id, toCString(param)))
+
+    def setOpt(option: CurlOption.CurlOption, param: Boolean): CurlCode.CurlCode =
+      CurlCode(ccurl.setoptInt(curl, option.id, if (param) 1 else 0))
+
+    def setOpt(option: CurlOption.CurlOption, param: Ptr[_]): CurlCode.CurlCode =
+      CurlCode(ccurl.setoptPtr(curl, option.id, param))
+
+    def setOpt(option: CurlOption.CurlOption, param: CFuncPtr): CurlCode.CurlCode =
+      setOpt(option, CFuncPtr.toPtr(param))
+
+  }
+  
+}
 
 private[requests] trait Mime {}
 
 private[requests] trait MimePart {}
 
 private[requests] trait CurlUrl {}
+
+private[requests] object CurlUrl {
+
+  implicit def curlUrlSyntax(curlUrl: Ptr[CurlUrl]): CurlUrlOps = new CurlUrlOps(curlUrl)
+
+  final class CurlUrlOps(url: Ptr[CurlUrl]) {
+
+    private val ccurl = libcurlPlatformCompat.instance
+
+    def cleanup: Unit =
+      ccurl.urlCleanup(url)
+      
+    def set(part: CurlUrlPart.CurlUrlPart, content: String, flags: CurlUrlFlag.CurlUrlFlag*)(implicit zone: Zone): CurlUrlCode.CurlUrlCode = 
+      CurlUrlCode(ccurl.urlSet(url, part.id, toCString(content), flags.foldLeft(0)(_ + _.id).toUInt))
+
+    def get(part: CurlUrlPart.CurlUrlPart, flags: CurlUrlFlag.CurlUrlFlag*): (CurlUrlCode.CurlUrlCode, String) = {
+      Zone { implicit z => 
+        val out: Ptr[Ptr[Byte]] = alloc(1)
+        val status = CurlUrlCode(ccurl.urlGet(url, part.id, out, flags.foldLeft(0)(_ + _.id).toUInt))
+
+        val outStr = if (!out == null) "" else fromCString(!out)
+
+        (status, outStr)
+      }
+    }
+    
+  }
+  
+}
 
 private[requests] object libcurlPlatformCompat {
   @extern @link("libcurl") @link("crypt32") @define("REQUESTS_SCALA_CURL_FFI")
@@ -58,8 +120,10 @@ private[requests] trait CCurl {
   def urlCleanup(url: Ptr[CurlUrl]): Unit = extern
 
   @name("curl_url_set")
-  def urlSet(url: Ptr[CurlUrl], part: CurlUrlPart, content: Ptr[_], flags: UInt): Unit
+  def urlSet(url: Ptr[CurlUrl], part: CInt, content: Ptr[_], flags: UInt): CInt = extern 
 
+  @name("curl_url_get")
+  def urlGet(url: Ptr[CurlUrl], part: CInt, content: Ptr[Ptr[Byte]], flags: UInt): CInt = extern
 }
 
 private[requests] object CurlCode extends Enumeration {
@@ -1129,4 +1193,76 @@ private[requests] object CurlInfo extends Enumeration {
   val StarttransferTimeT = Value(OffT + 54)
   val RedirectTimeT = Value(OffT + 55)
   val AppconnectTimeT = Value(OffT + 56)
+}
+
+/* the error codes for the URL API */
+object CurlUrlCode extends Enumeration {
+  type CurlUrlCode = Value
+  val Ok = Value(0, "CURLUE_OK")
+  val BadHandle = Value(1, "CURLUE_BAD_HANDLE")
+  val BadPartpointer = Value(2, "CURLUE_BAD_PARTPOINTER")
+  val MalformedInput = Value(3, "CURLUE_MALFORMED_INPUT")
+  val BadPortNumber = Value(4, "CURLUE_BAD_PORT_NUMBER")
+  val UnsupportedScheme = Value(5, "CURLUE_UNSUPPORTED_SCHEME")
+  val Urldecode = Value(6, "CURLUE_URLDECODE")
+  val OutOfMemory = Value(7, "CURLUE_OUT_OF_MEMORY")
+  val UserNotAllowed = Value(8, "CURLUE_USER_NOT_ALLOWED")
+  val UnknownPart = Value(9, "CURLUE_UNKNOWN_PART")
+  val NoScheme = Value(10, "CURLUE_NO_SCHEME")
+  val NoUser = Value(20, "CURLUE_NO_USER")
+  val NoPassword = Value(21, "CURLUE_NO_PASSWORD")
+  val NoOptions = Value(22, "CURLUE_NO_OPTIONS")
+  val NoHost = Value(23, "CURLUE_NO_HOST")
+  val NoPort = Value(24, "CURLUE_NO_PORT")
+  val NoQuery = Value(25, "CURLUE_NO_QUERY")
+  val NoFragment = Value(26, "CURLUE_NO_FRAGMENT")
+  val NoZoneid = Value(27, "CURLUE_NO_ZONEID")
+  val BadFileUrl = Value(28, "CURLUE_BAD_FILE_URL")
+  val BadFragment = Value(29, "CURLUE_BAD_FRAGMENT")
+  val BadHostname = Value(30, "CURLUE_BAD_HOSTNAME")
+  val BadIpv6 = Value(31, "CURLUE_BAD_IPV6")
+  val BadLogin = Value(32, "CURLUE_BAD_LOGIN")
+  val BadPassword = Value(33, "CURLUE_BAD_PASSWORD")
+  val BadPath = Value(34, "CURLUE_BAD_PATH")
+  val BadQuery = Value(35, "CURLUE_BAD_QUERY")
+  val BadScheme = Value(36, "CURLUE_BAD_SCHEME")
+  val BadSlashes = Value(37, "CURLUE_BAD_SLASHES")
+  val BadUser = Value(38, "CURLUE_BAD_USER")
+  val LacksIdn = Value(39, "CURLUE_LACKS_IDN")
+  val TooLarge = Value(40, "CURLUE_TOO_LARGE")
+  val Last = Value(41, "CURLUE_LAST")
+}
+
+object CurlUrlPart extends Enumeration {
+  type CurlUrlPart = Value
+  val Url = Value(0, "CURLUPART_URL")
+  val Scheme = Value(1, "CURLUPART_SCHEME")
+  val User = Value(2, "CURLUPART_USER")
+  val Password = Value(3, "CURLUPART_PASSWORD")
+  val Options = Value(4, "CURLUPART_OPTIONS")
+  val Host = Value(5, "CURLUPART_HOST")
+  val Port = Value(6, "CURLUPART_PORT")
+  val Path = Value(7, "CURLUPART_PATH")
+  val Query = Value(8, "CURLUPART_QUERY")
+  val Fragment = Value(9, "CURLUPART_FRAGMENT")
+  val Zoneid = Value(10, "CURLUPART_ZONEID")
+}
+
+object CurlUrlFlag extends Enumeration {
+  type CurlUrlFlag = Value
+  val DefaultPort = Value(1, "CURLU_DEFAULT_PORT")       
+  val NoDefaultPort = Value(2, "CURLU_NO_DEFAULT_PORT")    
+  val DefaultScheme = Value(4, "CURLU_DEFAULT_SCHEME")     
+  val NonSupportScheme = Value(8, "CURLU_NON_SUPPORT_SCHEME") 
+  val PathAsIs = Value(16, "CURLU_PATH_AS_IS")         
+  val DisallowUser = Value(32, "CURLU_DISALLOW_USER")      
+  val Urldecode = Value(64, "CURLU_URLDECODE")          
+  val Urlencode = Value(128, "CURLU_URLENCODE")          
+  val Appendquery = Value(256, "CURLU_APPENDQUERY")        
+  val GuessScheme = Value(512, "CURLU_GUESS_SCHEME")       
+  val NoAuthority = Value(1024, "CURLU_NO_AUTHORITY")      
+  val AllowSpace = Value(2048, "CURLU_ALLOW_SPACE")       
+  val Punycode = Value(4096, "CURLU_PUNYCODE")          
+  val Puny2idn = Value(8192, "CURLU_PUNY2IDN")          
+  val GetEmpty = Value(16384, "CURLU_GET_EMPTY")         
 }

@@ -4,9 +4,8 @@ package requests
 import javax.net.ssl.SSLContext
 import java.net.HttpCookie
 import java.io.InputStream
-import scala.scalanative.unsafe.Zone
-import scala.scalanative.unsafe.Ptr
-import scala.scalanative.unsafe.toCString
+import scala.scalanative.unsafe._
+import scala.scalanative.unsigned._
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 
@@ -41,29 +40,36 @@ private[requests] object PlatformRequester {
 
     def readBytesThrough[T](f: java.io.InputStream => T): T = {
       Zone { implicit z =>
-        val curl = libcurlPlatformCompat.instance
-        val handle = curl.init
+        val ccurl = libcurlPlatformCompat.instance
+        val handle = ccurl.init
 
         if (handle == null) {
-          ???
+          // TODO not sure when the handle could be null
+          throw new Exception("")
         }
 
-        val curlurl = curl.url()
+        val curlu = ccurl.url()
 
-        if (url == null) {
-          ???
+        if (curlu == null) {
+          // TODO not sure when the URL could be null
+          throw new Exception("")
         }
 
-        curl.urlSet(curlurl, ???, toCString(url), )
 
         try {
-          curl.setoptPtr(handle, CurlOption.Url.id, toCString(url, StandardCharsets.UTF_8))
-          curl.setoptPtr(handle, CurlOption.HeaderFunction, ???)
+          // curl.setoptPtr(handle, CurlOption.Url.id, toCString(url, StandardCharsets.UTF_8))
+          // curl.setoptPtr(handle, CurlOption.HeaderFunction.id, ???)
 
-        
+          curlu.set(CurlUrlPart.Url, url)
+
+          params.foreach {
+            case (k, v) => curlu.set()
+          }
+            
+                  
         } finally {
-          curl.cleanup(handle)
-          curl.urlCleanup(curlurl)
+          handle.cleanup
+          curlu.cleanup
         }
       }
     }
@@ -75,24 +81,31 @@ object Main {
     Zone { implicit z =>
 
       
-      val curl = libcurlPlatformCompat.instance
+      val ccurl = libcurlPlatformCompat.instance
+      val handle = ccurl.init
+      val url = ccurl.url()
 
-      val handle = curl.init
       try {
 
-        val url = "http://localhost:8080/"
+        val urlStr = "http://localhost:8080/potato"
 
-        if (curl != null) {
-          curl.setoptInt(handle, CurlOption.Verbose.id, 1)
-          curl.setoptPtr(handle, CurlOption.Url.id, toCString(url, StandardCharsets.UTF_8))
-          val res = curl.perform(handle)
-          println(res)
+        if (url != null) {
+
+          val c1 = url.set(CurlUrlPart.Url, urlStr, CurlUrlFlag.Urlencode, CurlUrlFlag.DisallowUser)
+          println(c1)
+          val c0 = url.set(CurlUrlPart.Query, "hek=y a k", CurlUrlFlag.Urlencode, CurlUrlFlag.Appendquery)
+          println(c0)
+          val (c2, outStr) = url.get(CurlUrlPart.Url)
+          println(c2)
+
+          println(outStr)
           
         }
 
       
       } finally {
-        curl.cleanup(handle)
+        handle.cleanup
+        url.cleanup
       }
 
     }

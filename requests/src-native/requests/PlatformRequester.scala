@@ -147,14 +147,12 @@ private[requests] object PlatformRequester {
               val byteArray = bytes.toByteArray
 
               handle.setOpt(CurlOption.PostFieldSize, byteArray.length)
-              handle.setOpt(CurlOption.PostFields)
-              
 
-              connection.setFixedLengthStreamingMode(byteArray.length)
-              usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
+              // connection.setFixedLengthStreamingMode(byteArray.length)
+              // usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
             } else {
-              connection.setChunkedStreamingMode(0)
-              usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
+              // connection.setChunkedStreamingMode(0)
+              // usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
             }
           }
 
@@ -180,6 +178,13 @@ private[requests] object PlatformRequester {
 }
 
 object Main {
+
+  lazy val multi = {
+    libcurlPlatformCompat.instance.initMulti()
+    
+  }
+
+  
   def main(args: Array[String]): Unit = {
     Zone { implicit z =>
 

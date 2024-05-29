@@ -31,6 +31,42 @@ object CurlSlist {
 
 private[requests] trait Curl {}
 
+private[requests] trait CurlMulti {}
+
+private[requests] object CurlMulti {
+  implicit def curlMultiSyntax(curlMulti: Ptr[CurlMulti]): CurlMultiOps = 
+    new CurlMultiOps(curlMulti)
+    
+    
+  final class CurlMultiOps(multi: Ptr[CurlMulti]) {
+
+    private val ccurl = libcurlPlatformCompat.instance
+    
+    def cleanup: Unit = ccurl.multiCleanup(multi)
+
+    def add(handle: Ptr[Curl]): CurlMultiCode = 
+      CurlMultiCode(ccurl.multiAddHandle(multi, handle))
+
+    def perform(runningHandles: Ptr[Int]): (CurlMultiCode, Int) = 
+      Zone { implicit z =>
+        val runningHandlesPtr = alloc[Int](1)
+
+        val out = ccurl.perform(multi, runningHandlesPtr)
+        (CurlMultiCode(out), !runningHandlesPtr)
+        
+      }
+
+    def infoRead: Unit = 
+      Zone { implicit z =>
+        val messagesInQueue = 
+        
+      }
+      ccurl.multiInfoRead()
+    
+  }
+  
+}
+
 private[requests] object Curl {
 
   implicit def curlSyntax(curl: Ptr[Curl]): CurlOps = new CurlOps(curl)
@@ -154,6 +190,73 @@ private[requests] trait CCurl {
 
   @name("curl_slist_free_all")
   def slistFree(list: Ptr[CurlSlist]): Unit = extern
+
+  @name("curl_multi_init")
+  def multiInit(): Ptr[CurlMulti] = extern
+  
+  @name("curl_multi_cleanup")
+  def multiCleanup(multi: Ptr[CurlMulti]): Unit = extern
+
+  @name("curl_multi_add_handle")
+  def multiAddHandle(multi: Ptr[CurlMulti], easy: Ptr[Curl]): CInt = extern
+
+  @name("curl_multi_perform")
+  def multiAddHandle(multi: Ptr[CurlMulti], runningHandles: Ptr[Int]): CInt = extern
+
+  @name("curl_multi_info_read")
+  def multiInfoRead(multi: Ptr[CurlMulti], msgsInQueue: Ptr[Int]): Ptr[CurlMessage] = extern
+
+  @name("curl_multi_poll")
+  def multiPoll(multi: Ptr[CurlMulti], extra_fds: Ptr[_], extra_nfds: UInt, timeoutMs: Int, numfds: Ptr[Int]): CurlMultiCode = extern
+
+  @name("curl_multi_wait")
+  def multiWait(multi: Ptr[CurlMulti], extra_fds: Ptr[_], extra_nfds: UInt, timeoutMs: Int, numfds: Ptr[Int]): CurlMultiCode = extern
+
+// CURLMcode curl_multi_wait(CURLM *multi_handle,
+//                           struct curl_waitfd extra_fds[],
+//                           unsigned int extra_nfds,
+//                           int timeout_ms,
+//                           int *numfds);
+                            // CURLMcode curl_multi_poll(CURLM *multi_handle,
+  //                         struct curl_waitfd extra_fds[],
+  //                         unsigned int extra_nfds,
+  //                         int timeout_ms,
+  //                         int *numfds);
+}
+
+private[requests] type CurlMessage = CStruct3[
+  CInt,
+  Ptr[Curl],
+  
+]
+
+private[requests] object CurlMessageMessage {
+  type CurlMessageMessage = Value
+  val None = Value(0, "CURLMSG_NONE")
+  val Done = Value(0, "CURLMSG_DONE")
+  val Last = Value(0, "CURLMSG_LAST")
+  
+}
+
+private[requests] object CurlMultiCode extends Enumeration {
+  type CurlMultiCode = Value
+
+  val CallMultiPerform = Value(-1, "CALL_MULTI_PERFORM") = -1
+  val Ok = Value(0, "OK")
+  val BadHandle = Value(1, "BAD_HANDLE")
+  val BadEasyHandle = Value(2, "BAD_EASY_HANDLE")
+  val OutOfMemory = Value(3, "OUT_OF_MEMORY")
+  val InternalError = Value(4, "INTERNAL_ERROR")
+  val BadSocket = Value(5, "BAD_SOCKET")
+  val UnknownOption = Value(6, "UNKNOWN_OPTION")
+  val AddedAlready = Value(7, "ADDED_ALREADY")
+  val RecursiveApiCall = Value(8, "RECURSIVE_API_CALL")
+  val WakeupFailure = Value(9, "WAKEUP_FAILURE")
+  val BadFunctionArgument = Value(10, "BAD_FUNCTION_ARGUMENT")
+  val AbortedByCallback = Value(11, "ABORTED_BY_CALLBACK")
+  val UnrecoverablePoll = Value(12, "UNRECOVERABLE_POLL")
+  val Last = Value(13, "LAST")
+  
 }
 
 private[requests] object CurlCode extends Enumeration {

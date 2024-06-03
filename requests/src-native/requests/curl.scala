@@ -4,6 +4,7 @@ import scala.scalanative.unsafe._
 import scala.scalanative.unsigned._
 import scala.scalanative.meta.LinktimeInfo.isWindows
 import scala.scalanative.unsigned.UInt
+import scala.collection.mutable.ArrayBuffer
 
 private[requests] trait CurlSlist { }
 
@@ -44,26 +45,92 @@ private[requests] object CurlMulti {
     
     def cleanup: Unit = ccurl.multiCleanup(multi)
 
-    def add(handle: Ptr[Curl]): CurlMultiCode = 
+    def add(handle: Ptr[Curl]): CurlMultiCode.CurlMultiCode = 
       CurlMultiCode(ccurl.multiAddHandle(multi, handle))
 
-    def perform(runningHandles: Ptr[Int]): (CurlMultiCode, Int) = 
+    def perform: (CurlMultiCode.CurlMultiCode, Int) = 
       Zone { implicit z =>
         val runningHandlesPtr = alloc[Int](1)
 
-        val out = ccurl.perform(multi, runningHandlesPtr)
+        val out = ccurl.multiPerform(multi, runningHandlesPtr)
         (CurlMultiCode(out), !runningHandlesPtr)
         
       }
 
-    def infoRead: Unit = 
+    /**
+    * returns the next message in the multi handle's 
+    * internal message queue, or null on the left hand side,
+    * and the number of remaining messages after this one
+    * on the right hand side
+    */
+    def infoRead: (CurlMessage, Int) = 
       Zone { implicit z =>
-        val messagesInQueue = 
-        
+        val messagesInQueue = alloc[Int](1)
+        val msg = ccurl.multiInfoRead(multi, messagesInQueue)
+        val res = if (msg != null)
+          new CurlMessage(CurlMessageMessage(msg._1), msg._2, msg._3)
+        else 
+          null
+
+        (res, !messagesInQueue)
       }
-      ccurl.multiInfoRead()
+
+    def infoReadAll: Seq[CurlMessage] = 
+
+      infoRead match {
+        case (null, 0) => Seq.empty
+        case (msg, i) => 
+          val buffer = new ArrayBuffer[CurlMessage](i)
+          buffer :+ msg
+
+          var next = infoRead
+          while (next._1 != null) {
+            buffer :+ next._1
+            next = infoRead
+          }
+
+          Seq.from(buffer)
+          
+      }
+
+    def poll(timeoutMs: Int): (CurlMultiCode.CurlMultiCode, Int) = 
+      Zone { implicit z =>
+
+        val num = alloc[Int](1)
+        
+        val code = ccurl.multiPoll(
+          multi,
+          null,
+          0.toUInt,
+          timeoutMs,
+          num
+        )
+        (CurlMultiCode(code), !num)
+      }
+
+    def wait_(timeoutMs: Int): (CurlMultiCode.CurlMultiCode, Int) = 
+      Zone { implicit z =>
+
+        val num = alloc[Int](1)
+        
+        val code = ccurl.multiPoll(
+          multi,
+          null,
+          0.toUInt,
+          timeoutMs,
+          num
+        )
+        (CurlMultiCode(code), !num)
+      }
+      
     
   }
+  
+}
+
+private[requests] class CurlMessage(message: CurlMessageMessage.CurlMessageMessage, handle: Ptr[Curl], data: Ptr[_]) {
+  def check(compareTo: CurlCode.CurlCode): Boolean =
+    data.asInstanceOf[CInt].toInt == compareTo.id
   
 }
 
@@ -98,6 +165,9 @@ private[requests] object Curl {
 
     def setOpt(option: CurlOption.CurlOption, param: CFuncPtr): CurlCode.CurlCode =
       setOpt(option, CFuncPtr.toPtr(param))
+
+    def pause(flag: CurlPauseFlag.CurlPauseFlag): CurlCode.CurlCode = 
+      CurlCode(ccurl.pause(curl, flag.id))
 
   }
   
@@ -152,6 +222,21 @@ private[requests] object libcurlPlatformCompat {
 
 @extern
 private[requests] trait CCurl {
+
+ // struct CURLMsg {
+ //   CURLMSG msg;       /* what this message means */
+ //   CURL *easy_handle; /* the handle it concerns */
+ //   union {
+ //     void *whatever;    /* message-specific data */
+ //     CURLcode result;   /* return code for transfer */
+ //   } data;
+ // };
+  type CurlMsg = CStruct3[
+    CInt,
+    Ptr[Curl],
+    Ptr[_]
+  ]
+
   @name("requests_scala_curl_setopt_int")
   def setoptInt(handle: Ptr[Curl], option: CInt, parameter: Int): CInt = extern
 
@@ -172,6 +257,9 @@ private[requests] trait CCurl {
 
   @name("curl_easy_perform")
   def perform(easy_handle: Ptr[Curl]): CInt = extern
+
+  @name("curl_easy_pause")
+  def pause(easy_handle: Ptr[Curl], bitmask: CInt): CInt = extern
 
   @name("curl_url")
   def url(): Ptr[CurlUrl] = extern
@@ -201,16 +289,17 @@ private[requests] trait CCurl {
   def multiAddHandle(multi: Ptr[CurlMulti], easy: Ptr[Curl]): CInt = extern
 
   @name("curl_multi_perform")
-  def multiAddHandle(multi: Ptr[CurlMulti], runningHandles: Ptr[Int]): CInt = extern
+  def multiPerform(multi: Ptr[CurlMulti], runningHandles: Ptr[Int]): CInt = extern
 
   @name("curl_multi_info_read")
-  def multiInfoRead(multi: Ptr[CurlMulti], msgsInQueue: Ptr[Int]): Ptr[CurlMessage] = extern
+  def multiInfoRead(multi: Ptr[CurlMulti], msgsInQueue: Ptr[Int]): Ptr[CurlMsg] = extern
 
   @name("curl_multi_poll")
-  def multiPoll(multi: Ptr[CurlMulti], extra_fds: Ptr[_], extra_nfds: UInt, timeoutMs: Int, numfds: Ptr[Int]): CurlMultiCode = extern
+  def multiPoll(multi: Ptr[CurlMulti], extra_fds: Ptr[_], extra_nfds: UInt, timeoutMs: Int, numfds: Ptr[Int]): CInt = extern
 
   @name("curl_multi_wait")
-  def multiWait(multi: Ptr[CurlMulti], extra_fds: Ptr[_], extra_nfds: UInt, timeoutMs: Int, numfds: Ptr[Int]): CurlMultiCode = extern
+  def multiWait(multi: Ptr[CurlMulti], extra_fds: Ptr[_], extra_nfds: UInt, timeoutMs: Int, numfds: Ptr[Int]): CInt = extern
+
 
 // CURLMcode curl_multi_wait(CURLM *multi_handle,
 //                           struct curl_waitfd extra_fds[],
@@ -224,13 +313,7 @@ private[requests] trait CCurl {
   //                         int *numfds);
 }
 
-private[requests] type CurlMessage = CStruct3[
-  CInt,
-  Ptr[Curl],
-  
-]
-
-private[requests] object CurlMessageMessage {
+private[requests] object CurlMessageMessage extends Enumeration {
   type CurlMessageMessage = Value
   val None = Value(0, "CURLMSG_NONE")
   val Done = Value(0, "CURLMSG_DONE")
@@ -241,7 +324,7 @@ private[requests] object CurlMessageMessage {
 private[requests] object CurlMultiCode extends Enumeration {
   type CurlMultiCode = Value
 
-  val CallMultiPerform = Value(-1, "CALL_MULTI_PERFORM") = -1
+  val CallMultiPerform = Value(-1, "CALL_MULTI_PERFORM")
   val Ok = Value(0, "OK")
   val BadHandle = Value(1, "BAD_HANDLE")
   val BadEasyHandle = Value(2, "BAD_EASY_HANDLE")
@@ -1398,4 +1481,14 @@ object CurlUrlFlag extends Enumeration {
   val Punycode = Value(4096, "CURLU_PUNYCODE")          
   val Puny2idn = Value(8192, "CURLU_PUNY2IDN")          
   val GetEmpty = Value(16384, "CURLU_GET_EMPTY")         
+}
+
+object CurlPauseFlag extends Enumeration {
+  type CurlPauseFlag = Value
+
+  val PauseRecv = Value(1, "CURLPAUSE_RECV")
+  val PauseSend = Value(2, "CURLPAUSE_SEND")
+  val PauseAll = Value(3, "CURLPAUSE_ALL")
+  val UnpauseAll = Value(0, "CURLPAUSE_CONT")
+  
 }

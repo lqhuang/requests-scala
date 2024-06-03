@@ -15,6 +15,15 @@ import java.io.OutputStream
 // you need to install libcurl 
 private[requests] object PlatformRequester {
 
+  private val ccurl = libcurlPlatformCompat.instance
+
+  private lazy val multi = {
+    // This lives for the whole duration of the app, so 
+    // we don't clean it up
+    // TODO should it get cleaned up at some point?
+    ccurl.multiInit()
+  }
+
   def apply(verb: String, 
             sess: BaseSession,
              url: String,
@@ -41,7 +50,7 @@ private[requests] object PlatformRequester {
              onHeadersReceived: StreamHeaders => Unit): geny.Readable = new geny.Readable {
 
     private val upperCaseVerb = verb.toUpperCase()
-    def readBytesThrough[T](f: java.io.InputStream => T): T = {
+    def readBytesThrough[T](f: InputStream => T): T = {
       Zone { implicit z =>
         val ccurl = libcurlPlatformCompat.instance
         val handle = ccurl.init
@@ -140,29 +149,49 @@ private[requests] object PlatformRequester {
 
           // TODO setup upload
 
-          if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
-            if (!chunkedUpload) {
-              val bytes = new ByteArrayOutputStream()
-              usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
-              val byteArray = bytes.toByteArray
+          // if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
+          //   if (!chunkedUpload) {
+          //     val bytes = new ByteArrayOutputStream()
+          //     usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
+          //     val byteArray = bytes.toByteArray
 
-              handle.setOpt(CurlOption.PostFieldSize, byteArray.length)
+          //     handle.setOpt(CurlOption.PostFieldSize, byteArray.length)
 
-              // connection.setFixedLengthStreamingMode(byteArray.length)
-              // usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
-            } else {
-              // connection.setChunkedStreamingMode(0)
-              // usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
-            }
-          }
+          //     // connection.setFixedLengthStreamingMode(byteArray.length)
+          //     // usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
+          //   } else {
+          //     // connection.setChunkedStreamingMode(0)
+          //     // usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
+          //   }
+          // }
 
           // TODO setup header read
           // TODO set up body read
 
-          handle.perform
+          val input = new InputStream {
+            override def read(): Int =  {
+              handle.pause(CurlPauseFlag.UnpauseAll)
+              // Curl docs say that calling unpause 
+              // might immediately trigger the callbacks 
+              // due to buffered data before unpause returns
+              // therefore we must check if we have new data before we perform
+
+              // TODO check for new data
+              // TODO set new data
+
+              multi.perform
+              handle.pause(CurlPauseFlag.PauseAll)
+              // TODO handle callback bytes
+              // TODO return
+
+              ???
+
+            }
+             
+          }
 
             
-          ???
+          f(input)
                   
         } finally {
           handle.cleanup
@@ -177,19 +206,33 @@ private[requests] object PlatformRequester {
     try fn(os) finally os.close()
 }
 
-object Main {
+private[requests] class ByteReceiver(
+  var headerBuffer: Array[Byte],
+  var buffer: Array[Byte]
+) {
 
-  lazy val multi = {
-    libcurlPlatformCompat.instance.initMulti()
+  def receiveHeaders(): CInt = {
     
   }
+  
+}
 
+private[requests] class PlatformRequester(
+  receiver: ByteReceiver
+  
+)
+
+object Main {
+
+  val ccurl = libcurlPlatformCompat.instance
+
+  lazy val multi = {
+    ccurl.multiInit()
+  }
   
   def main(args: Array[String]): Unit = {
     Zone { implicit z =>
 
-      
-      val ccurl = libcurlPlatformCompat.instance
       val handle = ccurl.init
       val url = ccurl.url()
 
@@ -200,18 +243,38 @@ object Main {
         if (url != null) {
 
           val c1 = url.set(CurlUrlPart.Url, urlStr, CurlUrlFlag.Urlencode, CurlUrlFlag.DisallowUser)
-          println(c1)
-          val c0 = url.set(CurlUrlPart.Query, "hek=y a k", CurlUrlFlag.Urlencode, CurlUrlFlag.Appendquery)
-          println(c0)
-          val (c2, outStr) = url.get(CurlUrlPart.Url)
-          println(c2)
 
-          println(outStr)
+          handle.setOpt(CurlOption.Url, url.get(CurlUrlPart.Url)._2)
+          multi.add(handle)
+          var stillRunning = 1
+
+          while (stillRunning > 0) {
+
+            val (mc0, i) = multi.perform
+            stillRunning = i
+            var mc = mc0
+            var numfds = 0
+
+            if (mc == CurlMultiCode.Ok) {
+              val (code, fds) = multi.wait_(1000)
+              numfds = fds
+              mc = code
+             
+            }
+
+            if (mc != CurlMultiCode.Ok) {
+              throw new Exception("POOP")
+            }
+            
+          }
+
+
           
         }
 
       
       } finally {
+        multi.cleanup
         handle.cleanup
         url.cleanup
       }

@@ -5,6 +5,7 @@ import scala.scalanative.unsigned._
 import scala.scalanative.meta.LinktimeInfo.isWindows
 import scala.scalanative.unsigned.UInt
 import scala.collection.mutable.ArrayBuffer
+import java.nio.charset.StandardCharsets
 
 private[requests] trait CurlSlist { }
 
@@ -47,6 +48,9 @@ private[requests] object CurlMulti {
 
     def add(handle: Ptr[Curl]): CurlMultiCode.CurlMultiCode = 
       CurlMultiCode(ccurl.multiAddHandle(multi, handle))
+
+    def remove(handle: Ptr[Curl]): CurlMultiCode.CurlMultiCode = 
+      CurlMultiCode(ccurl.multiRemoveHandle(multi, handle))
 
     def perform: (CurlMultiCode.CurlMultiCode, Int) = 
       Zone { implicit z =>
@@ -131,12 +135,14 @@ private[requests] object CurlMulti {
 private[requests] class CurlMessage(message: CurlMessageMessage.CurlMessageMessage, handle: Ptr[Curl], data: Ptr[_]) {
   def check(compareTo: CurlCode.CurlCode): Boolean =
     data.asInstanceOf[CInt].toInt == compareTo.id
-  
 }
 
 private[requests] object Curl {
 
   implicit def curlSyntax(curl: Ptr[Curl]): CurlOps = new CurlOps(curl)
+
+  // TODO maybe this can go into FFI file, or be pulled out of defines?
+  val WritefuncPause = 0x10000001
 
   final class CurlOps(curl: Ptr[Curl]) {
 
@@ -160,6 +166,9 @@ private[requests] object Curl {
     def setOpt(option: CurlOption.CurlOption, param: Boolean): CurlCode.CurlCode =
       CurlCode(ccurl.setoptInt(curl, option.id, if (param) 1 else 0))
 
+    def setOpt(option: CurlOption.CurlOption): CurlCode.CurlCode =
+      CurlCode(ccurl.setoptInt(curl, option.id, 1))
+
     def setOpt(option: CurlOption.CurlOption, param: Ptr[_]): CurlCode.CurlCode =
       CurlCode(ccurl.setoptPtr(curl, option.id, param))
 
@@ -169,8 +178,72 @@ private[requests] object Curl {
     def pause(flag: CurlPauseFlag.CurlPauseFlag): CurlCode.CurlCode = 
       CurlCode(ccurl.pause(curl, flag.id))
 
+    def unpause: CurlCode.CurlCode = 
+      pause(CurlPauseFlag.UnpauseAll)
+
+    def info(curlInfo: CurlInfo.CurlInfo, parameter: Long)(implicit z: Zone): CurlCode.CurlCode = {
+      val lPtr = alloc[Long](sizeof[Long])
+      !lPtr = parameter
+      CurlCode(ccurl.getInfo(curl, curlInfo.id, lPtr))
+    }
+
+    def info(curlInfo: CurlInfo.CurlInfo, parameter: String)(implicit z: Zone): CurlCode.CurlCode =
+      CurlCode(ccurl.getInfo(curl, curlInfo.id, toCString(parameter, StandardCharsets.UTF_8)))
+
+    def info(curlInfo: CurlInfo.CurlInfo, parameter: Ptr[_]): CurlCode.CurlCode =
+      CurlCode(ccurl.getInfo(curl, curlInfo.id, parameter))
+
+    def status: Int = Zone { implicit z =>
+      val status = alloc[Long](1)
+      val res = info(CurlInfo.ResponseCode, status)
+      if (res == CurlCode.Ok) {
+        (!status).toInt
+      } else {
+        throw new Exception(s"Cannot obtain status code: ${res}")
+      }
+    }
+
+    def headers(flags: CurlHeaderBitmask.CurlHeaderBitmask*): Seq[(String, String)] = {
+
+      val flagsMask = flags.map(_.id).sum
+
+      val first = ccurl.nextHeader(curl, flagsMask.toUInt, -1, null)
+
+      if (first == null) {
+        Nil
+      } else {
+
+        val res = ArrayBuffer[(String, String)]()
+
+        var next = first
+        while (next != null) {
+
+          val scalaHeader = 
+            fromCString(first._1) ->  
+              fromCString(first._2)
+
+          res.append(scalaHeader)
+
+          next = ccurl.nextHeader(curl, flagsMask.toUInt, -1, next)
+          
+        }
+
+        res.toSeq
+          
+      }
+    }
   }
   
+}
+
+private[requests] object CurlHeaderBitmask extends Enumeration {
+  type CurlHeaderBitmask = Value
+
+  val Header = Value(1,"CURLH_HEADER")
+  val Trailer = Value(2,"CURLH_TRAILER")
+  val Connect = Value(4,"CURLH_CONNECT")
+  val `1xx` = Value(8,"CURLH_1XX")
+  val Pseudo = Value(16,"CURLH_PSEUDO")
 }
 
 private[requests] trait Mime {}
@@ -237,6 +310,15 @@ private[requests] trait CCurl {
     Ptr[_]
   ]
 
+  type CurlHeader = CStruct6[
+    Ptr[Byte],
+    Ptr[Byte],
+    CSize,
+    CSize,
+    UInt,
+    Ptr[_]
+  ]
+
   @name("requests_scala_curl_setopt_int")
   def setoptInt(handle: Ptr[Curl], option: CInt, parameter: Int): CInt = extern
 
@@ -260,6 +342,12 @@ private[requests] trait CCurl {
 
   @name("curl_easy_pause")
   def pause(easy_handle: Ptr[Curl], bitmask: CInt): CInt = extern
+
+  @name("curl_easy_header")
+  def header(easy_handle: Ptr[Curl], name: Ptr[Byte], index: CSize, origin: UInt, request: Int, hout: Ptr[Ptr[CurlHeader]]): CInt = extern
+
+  @name("curl_easy_nextheader")
+  def nextHeader(easy_handle: Ptr[Curl], origin: UInt, request: Int, prev: Ptr[CurlHeader]): Ptr[CurlHeader] = extern
 
   @name("curl_url")
   def url(): Ptr[CurlUrl] = extern
@@ -288,6 +376,9 @@ private[requests] trait CCurl {
   @name("curl_multi_add_handle")
   def multiAddHandle(multi: Ptr[CurlMulti], easy: Ptr[Curl]): CInt = extern
 
+  @name("curl_multi_add_handle")
+  def multiRemoveHandle(multi: Ptr[CurlMulti], easy: Ptr[Curl]): CInt = extern
+
   @name("curl_multi_perform")
   def multiPerform(multi: Ptr[CurlMulti], runningHandles: Ptr[Int]): CInt = extern
 
@@ -299,6 +390,7 @@ private[requests] trait CCurl {
 
   @name("curl_multi_wait")
   def multiWait(multi: Ptr[CurlMulti], extra_fds: Ptr[_], extra_nfds: UInt, timeoutMs: Int, numfds: Ptr[Int]): CInt = extern
+
 
 
 // CURLMcode curl_multi_wait(CURLM *multi_handle,
@@ -319,6 +411,19 @@ private[requests] object CurlMessageMessage extends Enumeration {
   val Done = Value(0, "CURLMSG_DONE")
   val Last = Value(0, "CURLMSG_LAST")
   
+}
+
+private[requests] object CurlHeaderCode extends Enumeration {
+  type CurlHeaderCode = Value
+
+  val Ok = Value(0, "CURLHE_OK")
+  val Badindex = Value(0, "CURLHE_BADINDEX")
+  val Missing = Value(0, "CURLHE_MISSING")
+  val Noheaders = Value(0, "CURLHE_NOHEADERS")
+  val Norequest = Value(0, "CURLHE_NOREQUEST")
+  val OutOfMemory = Value(0, "CURLHE_OUT_OF_MEMORY")
+  val BadArgument = Value(0, "CURLHE_BAD_ARGUMENT")
+  val NotBuiltIn = Value(0, "CURLHE_NOT_BUILT_IN")
 }
 
 private[requests] object CurlMultiCode extends Enumeration {

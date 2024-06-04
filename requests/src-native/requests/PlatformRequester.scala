@@ -11,6 +11,9 @@ import java.nio.charset.StandardCharsets
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import scala.scalanative.runtime.ffi
+import CurlCode.CurlCode
+import CurlUrlCode.CurlUrlCode
+import CurlMultiCode.CurlMultiCode
 
 // TODO
 // you need to install libcurl 
@@ -18,12 +21,16 @@ private[requests] object PlatformRequester {
 
   private val ccurl = libcurlPlatformCompat.instance
 
-  private lazy val multi = {
-    // This lives for the whole duration of the app, so 
-    // we don't clean it up
-    // TODO should it get cleaned up at some point?
-    ccurl.multiInit()
+  private var multiPtr: Ptr[CurlMulti] = null
+    
+  private def multi = {
+    if (multiPtr == null)
+      multiPtr = ccurl.multiInit()
+
+    multiPtr
   }
+
+  // TODO clean up multi when no more transfers?
 
   def apply(verb: String, 
             sess: BaseSession,
@@ -58,15 +65,15 @@ private[requests] object PlatformRequester {
         val handle = ccurl.init
 
         if (handle == null) {
-          // TODO not sure when the handle could be null
-          throw new Exception("")
+          // As per curl docs:
+          // > If this function returns NULL, something went wrong and you cannot use the other curl functions.
+          throw new Exception("Could not initialise curl")
         }
 
         val curlu = ccurl.url()
 
         if (curlu == null) {
-          // TODO not sure when the URL could be null
-          throw new Exception("")
+          throw new Exception("Could not allocate URL; insufficient memory")
         }
 
         var headersSlist: Ptr[CurlSlist] = CurlSlist.empty
@@ -74,11 +81,11 @@ private[requests] object PlatformRequester {
         // TODO check outcome of setting on all set callls
 
         try {
-          curlu.set(CurlUrlPart.Url, url, CurlUrlFlag.Urlencode)
+          ensureUrlOk(curlu.set(CurlUrlPart.Url, url, CurlUrlFlag.Urlencode))
 
           params.foreach {
             case (k, v) => 
-              curlu.set(CurlUrlPart.Query, s"$k=$v", CurlUrlFlag.Urlencode, CurlUrlFlag.Appendquery)
+              ensureUrlOk(curlu.set(CurlUrlPart.Query, s"$k=$v", CurlUrlFlag.Urlencode, CurlUrlFlag.Appendquery))
           }
           // As per curl docs:
           // > To specify port number in this string, append :[port] to the end of the 
@@ -86,17 +93,17 @@ private[requests] object PlatformRequester {
           // > be specified with the separate option CURLOPT_PROXYPORT
           
           if (proxy != null)
-            handle.setOpt(CurlOption.Proxy, s"${proxy._1}:${proxy._2}")
+            ensureOk(handle.setOpt(CurlOption.Proxy, s"${proxy._1}:${proxy._2}"), "Could not set proxy")
 
           // TODO cert
           // TODO ssl context?
           // TODO verify ssl
 
           //
-          handle.setOpt(CurlOption.FollowLocation)
+          ensureOk(handle.setOpt(CurlOption.FollowLocation), "Could not set redirect follow")
 
 
-          upperCaseVerb match {
+          ensureOk(upperCaseVerb match {
             case "GET" => handle.setOpt(CurlOption.HttpGet)
             case "HEAD" => handle.setOpt(CurlOption.Head)
             case "POST" => handle.setOpt(CurlOption.Post)
@@ -107,31 +114,32 @@ private[requests] object PlatformRequester {
             case "CONNECT" => handle.setOpt(CurlOption.ConnectOnly)
             case "TRACE" => handle.setOpt(CurlOption.CustomRequest, "TRACE")
             case other => handle.setOpt(CurlOption.CustomRequest, other)
-          }
+          }, "Could not set method")
 
 
           blobHeaders.foreach { case (k, v) => 
-            headersSlist = headersSlist.append(s"$k:$v")
+            headersSlist = appendHeader(headersSlist, k, v)
           }
           sess.headers.foreach { case (k, v) => 
-            headersSlist = headersSlist.append(s"$k:$v")
+            headersSlist = appendHeader(headersSlist, k, v)
           }
           headers.foreach { case (k, v) => 
-            headersSlist = headersSlist.append(s"$k:$v")
+            headersSlist = appendHeader(headersSlist, k, v)
           }
           compress.headers.foreach { case (k, v) => 
-            headersSlist = headersSlist.append(s"$k:$v")
+            headersSlist = appendHeader(headersSlist, k, v)
           }
 
           auth.header.foreach(v => 
-            headersSlist = headersSlist.append(s"Authorization:$v")
+            headersSlist = appendHeader(headersSlist, "Authorization", v)
           )
 
 
-          handle.setOpt(CurlOption.TimeoutMs, readTimeout)
+          ensureOk(handle.setOpt(CurlOption.TimeoutMs, readTimeout), "could not set timeout")
 
-          handle.setOpt(CurlOption.ConnectTimeoutMs, connectTimeout)
+          ensureOk(handle.setOpt(CurlOption.ConnectTimeoutMs, connectTimeout), "could not set connect timeout")
 
+          // TODO check cookies
           val sessionCookieValues = for{
             c <- (sess.cookies ++ cookies).valuesIterator
             if !c.hasExpired
@@ -145,30 +153,41 @@ private[requests] object PlatformRequester {
                 .map{case (k, v) => s"""$k="$v""""}
                 .mkString("; ")            
                 
-              headersSlist = headersSlist.append(s"Cookie:${cookieValue}")
+              headersSlist = appendHeader(headersSlist, "Cookie", cookieValue)
             
           }      
           
-          handle.setOpt(CurlOption.HttpHeader, headersSlist)
-          handle.setOpt(CurlOption.Url, curlu.get(CurlUrlPart.Url)._2) // TODO handle get fails
+          ensureOk(handle.setOpt(CurlOption.HttpHeader, headersSlist), "could not set headers")
+          ensureOk(handle.setOpt(CurlOption.Url, curlu.get(CurlUrlPart.Url)._2), "could not set url")
+          
+          // TODO handle url get fails
 
           // TODO setup upload
 
-          // if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
-          //   if (!chunkedUpload) {
-          //     val bytes = new ByteArrayOutputStream()
-          //     usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
-          //     val byteArray = bytes.toByteArray
+          if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
+            if (!chunkedUpload) {
+              val bytes = new ByteArrayOutputStream()
+              usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
+              val byteArray = bytes.toByteArray
 
-          //     handle.setOpt(CurlOption.PostFieldSize, byteArray.length)
+              handle.setOpt(CurlOption.PostFieldSize, byteArray.length)
 
-          //     // connection.setFixedLengthStreamingMode(byteArray.length)
-          //     // usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
-          //   } else {
-          //     // connection.setChunkedStreamingMode(0)
-          //     // usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
-          //   }
-          // }
+              // connection.setFixedLengthStreamingMode(byteArray.length)
+              // usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
+            } else {
+
+              val readdata: Ptr[InputStream] = alloc(1)
+              !readdata = data.write
+
+              val headerFunction = CFuncPtr.toPtr(CFuncPtr4.fromScalaFunction[Ptr[Byte], CSize, CSize, Ptr[CStruct3[Ptr[Curl], Boolean, Array[Byte]]], CSize]{(buffer, size, nitems, userdata) =>
+                ???
+
+              })
+              ???
+              // connection.setChunkedStreamingMode(0)
+              // usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
+            }
+          }
 
           // TODO setup header read
           // TODO set up body read
@@ -195,8 +214,8 @@ private[requests] object PlatformRequester {
 
           })
 
-          handle.setOpt(CurlOption.HeaderData, headerData)
-          handle.setOpt(CurlOption.HeaderFunction, headerFunction)
+          ensureOk(handle.setOpt(CurlOption.HeaderData, headerData), "could not set headerdata")
+          ensureOk(handle.setOpt(CurlOption.HeaderFunction, headerFunction), "could not set headerfunction")
 
           val writeData = alloc[Array[Byte]](1)
           !writeData = null
@@ -214,10 +233,10 @@ private[requests] object PlatformRequester {
               }
           })
 
-          handle.setOpt(CurlOption.WriteData, writeData)
-          handle.setOpt(CurlOption.WriteFunction, writeFunction)
+          ensureOk(handle.setOpt(CurlOption.WriteData, writeData), "could not set writedata")
+          ensureOk(handle.setOpt(CurlOption.WriteFunction, writeFunction), "could not set writefunction")
 
-          multi.add(handle)
+          ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
 
           // TODO look for current in list of active transfers
           // TODO check status
@@ -229,20 +248,21 @@ private[requests] object PlatformRequester {
 
             val (code, inProgressCount) = multi.perform
 
-            if (code != CurlMultiCode.Ok) {
-              throw new Exception("Making the request went bad")
-            }
+            ensureMultiOk(code, "Failed to perform network transfers")
 
             val hasFinishedHeaders =  headerData._2
 
             if (!hasFinishedHeaders) {
-              multi.wait(1000)
+              // TODO 
+              val (code, something) = multi.wait_(1000)
+              ensureMultiOk(code, "Failed when waiting for socket activity")
             }
 
             receivingHeaders = !hasFinishedHeaders
             
           }
 
+          // TODO would be nicer to not do our own header parsing
           val responseHeaders = new String(headerData._3)
             .split("\r\n")
             .tail // the first line is the status
@@ -329,9 +349,9 @@ private[requests] object PlatformRequester {
                   
         } finally {
           multi.remove(handle)
-          handle.cleanup
-          curlu.cleanup
           headersSlist.free
+          curlu.cleanup
+          handle.cleanup
         }
       }
     }
@@ -339,6 +359,32 @@ private[requests] object PlatformRequester {
 
   private def usingOutputStream[T](os: OutputStream)(fn: OutputStream => T): Unit = 
     try fn(os) finally os.close()
+
+  private def ensureOk(code: CurlCode, message: => String): Unit = {
+    if (code != CurlCode.Ok) {
+      throw new Exception(s"Error: $message. Curl code: $code")
+    }
+  }
+
+  private def ensureUrlOk(code: CurlUrlCode): Unit = {
+    if (code != CurlUrlCode.Ok) {
+      throw new Exception(s"Failed when building the url: $code")
+    }
+  }
+
+  private def ensureMultiOk(code: CurlMultiCode, msg: => String): Unit = {
+    if (code != CurlMultiCode.Ok) {
+      throw new Exception(s"Error: $msg. Curl multi code: $code")
+    }
+  }
+
+  private def appendHeader(slist: Ptr[CurlSlist], key: String, value: String): Ptr[CurlSlist] = {
+    val res = slist.append(s"$key:$value")
+    if (res == null) {
+      throw new Exception(s"Failed to append header $key:$value")
+    }
+    res
+  }
 }
 
 private[requests] class ByteReceiver(

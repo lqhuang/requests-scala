@@ -143,6 +143,7 @@ private[requests] object Curl {
 
   // TODO maybe this can go into FFI file, or be pulled out of defines?
   val WritefuncPause = 0x10000001
+  val ReadfuncPause = 0x10000001
 
   final class CurlOps(curl: Ptr[Curl]) {
 
@@ -584,7 +585,7 @@ private[requests] object CurlOption extends Enumeration {
   /** Function that will be called to read the input (instead of fread). The parameters will use fread() syntax, make
     * sure to follow them.
     */
-  val ReadFunction = Value(10000 + 12)
+  val ReadFunction = Value(20000 + 12)
 
   /** Time-out the read operation after this amount of seconds */
   val Timeout = Value(13)

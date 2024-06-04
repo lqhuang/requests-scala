@@ -164,30 +164,6 @@ private[requests] object PlatformRequester {
 
           // TODO setup upload
 
-          if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
-            if (!chunkedUpload) {
-              val bytes = new ByteArrayOutputStream()
-              usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
-              val byteArray = bytes.toByteArray
-
-              handle.setOpt(CurlOption.PostFieldSize, byteArray.length)
-
-              // connection.setFixedLengthStreamingMode(byteArray.length)
-              // usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
-            } else {
-
-              val readdata: Ptr[InputStream] = alloc(1)
-              !readdata = data.write
-
-              val headerFunction = CFuncPtr.toPtr(CFuncPtr4.fromScalaFunction[Ptr[Byte], CSize, CSize, Ptr[CStruct3[Ptr[Curl], Boolean, Array[Byte]]], CSize]{(buffer, size, nitems, userdata) =>
-                ???
-
-              })
-              ???
-              // connection.setChunkedStreamingMode(0)
-              // usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
-            }
-          }
 
           // TODO setup header read
           // TODO set up body read
@@ -236,13 +212,101 @@ private[requests] object PlatformRequester {
           ensureOk(handle.setOpt(CurlOption.WriteData, writeData), "could not set writedata")
           ensureOk(handle.setOpt(CurlOption.WriteFunction, writeFunction), "could not set writefunction")
 
-          ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
+          val readdata: Ptr[Array[Byte]] = alloc(1)
+          !readdata = null
+
+          val readFunction = CFuncPtr.toPtr(CFuncPtr4.fromScalaFunction[Ptr[Byte], CSize, CSize, Ptr[Array[Byte]], CSize]{(buffer, size, nitems, userdata) =>
+            if (!userdata == null) {
+              Curl.ReadfuncPause.toCSize
+            } else if ((!userdata).size == 0) {
+              0.toCSize
+            } else {
+
+              val dataSize = (!userdata).size
+              
+              val toPull = Math.min((nitems * size).toInt, dataSize)
+              ffi.memcpy(
+                buffer, (!userdata).at(0), toPull.toCSize)
+
+              if (toPull < dataSize)
+                 !userdata = (!userdata).slice(toPull, dataSize)
+               else {
+                 !userdata = null
+               }
+
+              toPull.toCSize
+            }
+
+          })
+
+          ensureOk(handle.setOpt(CurlOption.ReadData, readdata), "Failed to set readdata")
+          ensureOk(handle.setOpt(CurlOption.ReadFunction, readFunction), "Failed to set read function")
+
+          var added = false
+          
+          if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
+            if (!chunkedUpload) {
+              val bytes = new ByteArrayOutputStream()
+              usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
+              val byteArray = bytes.toByteArray
+              !readdata = byteArray
+
+              if (!added) {                
+                ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
+                added = true
+              }              
+
+              while ((!readdata) != null) {
+                multi.perform
+              }
+
+              !readdata = new Array(0)
+              multi.perform
+              
+              // TODO headers?
+            } else {
+              // connection.setChunkedStreamingMode(0)
+              usingOutputStream(compress.wrap(new OutputStream {
+                override def write(b: Int): Unit = {
+                  !readdata = Array(1)
+                  (!readdata).update(0, b.toByte)
+                  if (!added) {                
+                    ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
+                    added = true
+                  }              
+
+                  ensureOk(handle.unpause, "Failed unpausing the easy handle")
+                  val (code, still_running) = multi.perform
+
+                  ensureMultiOk(code, "Failed performing multi transfer")
+                }
+
+                override def close(): Unit =  {
+                  !readdata = Array()
+                  if (!added) {                
+                    ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
+                    added = true
+                  }              
+
+                  ensureOk(handle.unpause, "Failed unpausing the easy handle")
+                  val (code, still_running) = multi.perform
+
+                  ensureMultiOk(code, "Failed performing multi transfer")
+                }
+
+              })) { os => data.write(os) }
+            }
+          }
+
+          if (!added) {                
+            ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
+            added = true
+          }              
 
           // TODO look for current in list of active transfers
           // TODO check status
 
           var receivingHeaders = true
-          var last = ""
 
           while (receivingHeaders) {
 
@@ -402,7 +466,7 @@ private[requests] class PlatformRequester(
 object Main {
 
   def main(args: Array[String]): Unit = {
-    val result = requests.get("http://localhost:8080")
+    val result = requests.post("http://localhost:8080", data = "hello hello hello hello hello hello hello hello hello")
     println(result.statusCode)
     println(result.headers.mkString("\n"))
     println(result.data)

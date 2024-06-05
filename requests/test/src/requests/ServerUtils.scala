@@ -47,7 +47,7 @@ object ServerUtils {
     * @param c
     *   Compression mode
     */
-  private class Plumper(c: Compress) {
+  private[requests] class Plumper(c: Compress) {
 
     private def wrap(is: InputStream): InputStream =
       c match {

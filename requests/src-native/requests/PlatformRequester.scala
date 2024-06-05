@@ -14,6 +14,8 @@ import scala.scalanative.runtime.ffi
 import CurlCode.CurlCode
 import CurlUrlCode.CurlUrlCode
 import CurlMultiCode.CurlMultiCode
+import requests.RequestBlob.ByteSourceRequestBlob
+import java.io.ByteArrayInputStream
 
 // TODO
 // you need to install libcurl 
@@ -78,8 +80,6 @@ private[requests] object PlatformRequester {
 
         var headersSlist: Ptr[CurlSlist] = CurlSlist.empty
 
-        // TODO check outcome of setting on all set callls
-
         try {
           ensureUrlOk(curlu.set(CurlUrlPart.Url, url, CurlUrlFlag.Urlencode))
 
@@ -133,7 +133,6 @@ private[requests] object PlatformRequester {
           auth.header.foreach(v => 
             headersSlist = appendHeader(headersSlist, "Authorization", v)
           )
-
 
           ensureOk(handle.setOpt(CurlOption.TimeoutMs, readTimeout), "could not set timeout")
 
@@ -466,7 +465,8 @@ private[requests] class PlatformRequester(
 object Main {
 
   def main(args: Array[String]): Unit = {
-    val result = requests.post("http://localhost:8080", data = "hello hello hello hello hello hello hello hello hello")
+    val data = new ByteArrayInputStream(List.fill(1_000_000)("hello").mkString(" ").getBytes())
+    val result = requests.post("http://localhost:8080", data = data)
     println(result.statusCode)
     println(result.headers.mkString("\n"))
     println(result.data)

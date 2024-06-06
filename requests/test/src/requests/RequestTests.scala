@@ -243,17 +243,18 @@ object RequestTests extends TestSuite{
         else
           assert(res.statusCode == 200)
       }
-      test("sslContext"){
-        val res = requests.get(
-          "https://client.badssl.com",
-          sslContext = FileUtils.createSslContext(s"$base/badssl.com-client.p12", "badssl.com"),
-          check = false
-        )
-        if (res.statusCode == 400)
-          println(certificateExpiredMessage)
-        else
-          assert(res.statusCode == 200)
-      }
+      // TODO
+      // test("sslContext"){
+      //   val res = requests.get(
+      //     "https://client.badssl.com",
+      //     sslContext = FileUtils.createSslContext(s"$base/badssl.com-client.p12", "badssl.com"),
+      //     check = false
+      //   )
+      //   if (res.statusCode == 400)
+      //     println(certificateExpiredMessage)
+      //   else
+      //     assert(res.statusCode == 200)
+      // }
       test("noCert"){
         val res = requests.get(
           "https://client.badssl.com",

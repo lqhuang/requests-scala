@@ -10,7 +10,8 @@ import scala.collection.mutable.StringBuilder
 
 object ServerUtils {
   def usingEchoServer(f: Int => Unit): Unit = {
-    val server = new EchoServer
+    val server: EchoServer =  ???
+      // new EchoServer
     try f(server.getPort())
     finally server.stop()
   }

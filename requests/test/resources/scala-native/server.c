@@ -69,9 +69,9 @@ void requests_scala_request_completed_callback(void *cls, struct MHD_Connection 
     }
 }
 
-int requests_scala_start_server(MHD_Daemon **daemon) {
+int requests_scala_start_server(struct MHD_Daemon **daemon) {
 
-    const struct MHD_Daemon *daemon_internal = MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD, 0, NULL, NULL,
+    struct MHD_Daemon *daemon_internal = MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD, 0, NULL, NULL,
                               &requests_scala_answer_to_connection, NULL,
                               MHD_OPTION_NOTIFY_COMPLETED, requests_scala_request_completed_callback, NULL,
                               MHD_OPTION_END);
@@ -89,14 +89,12 @@ int requests_scala_port(struct MHD_Daemon *daemon) {
     const union MHD_DaemonInfo *dinfo;
     dinfo = MHD_get_daemon_info(daemon, MHD_DAEMON_INFO_BIND_PORT);
     if ((NULL == dinfo) || (0 == dinfo->port) ) {
-      MHD_stop_daemon (d); return 32;
+      MHD_stop_daemon (daemon); return 32;
     }
-    port = dinfo->port;
+    return dinfo->port;
 }
 
 
-const union MHD_DaemonInfo * MHD_get_daemon_info (struct MHD_Daemon *daemon, enum MHD_DaemonInfoType infoType, ...)
-
-void requests_scala_stop_server(MHD_Daemon *daemon) {
+void requests_scala_stop_server(struct MHD_Daemon *daemon) {
     MHD_stop_daemon(daemon);
 }

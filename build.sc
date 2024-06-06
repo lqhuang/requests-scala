@@ -30,8 +30,7 @@ object requests extends Module {
     // TODO not sure what the implications of adding this are exactly
     def ivyDeps = super.ivyDeps() ++ Agg(ivy"com.github.lolgab::scala-native-crypto::0.1.0") 
 
-    override def nativeConfig = 
-      super.nativeConfig.withEmbedResources(true)
+    override def nativeEmbedResources = true
 
   }
 

@@ -22,10 +22,18 @@ object requests extends Module {
     object test extends ScalaTests with RequestsTestModule
   }
 
-  object native extends Cross[RequestsNativeModule](scalaVersions)
+  object native extends Cross[RequestsNativeModule](scalaVersions) 
   trait RequestsNativeModule extends RequestsModule with ScalaNativeModule {
     override def scalaNativeVersion = scalaNative
-    object test extends ScalaNativeTests with RequestsTestModule
+    object test extends ScalaNativeTests with RequestsTestModule  {
+      def nativeLinkingOptions = super.nativeLinkingOptions() ++ Seq("-L/usr/local/opt/openssl@3/lib")   
+    }
+    // TODO not sure what the implications of adding this are exactly
+    def ivyDeps = super.ivyDeps() ++ Agg(ivy"com.github.lolgab::scala-native-crypto::0.1.0") 
+
+    override def nativeConfig = 
+      super.nativeConfig.withEmbedResources(true)
+
   }
 
 }

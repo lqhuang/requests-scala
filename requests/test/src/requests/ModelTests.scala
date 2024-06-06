@@ -5,13 +5,17 @@ import java.io.File
 import java.nio.file.{FileSystems, Path}
 
 import utest._
+import java.io.FileOutputStream
+import java.nio.file.Files
 
 object ModelTests extends TestSuite{
   val tests = Tests {
     test("multipart file uploads should contain application/octet-stream content type") {
-      val path = getClass.getResource("/license.zip").getPath
-      val file = new File(path)
-      val nioPath = FileSystems.getDefault.getPath(path)
+      val file = File.createTempFile("multipart_test", null)
+      file.deleteOnExit()
+      val license = getClass.getResourceAsStream("/license.zip")
+      Files.copy(license, file.toPath())
+      val nioPath = file.toPath()
       val fileKey = "fileKey"
       val fileName = "fileName"
       

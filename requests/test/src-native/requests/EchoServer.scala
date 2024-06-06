@@ -7,19 +7,35 @@ import java.util.zip.{GZIPInputStream, InflaterInputStream}
 import requests.Compress._
 import scala.annotation.tailrec
 import scala.collection.mutable.StringBuilder
-import scala.scalanative.unsafe.extern
-import scala.scalanative.unsafe.link
+import scala.scalanative.unsafe._
+import scala.scalanative.unsigned._
+import scala.scalanative.runtime.ffi._
 
 private[requests] class EchoServer {
 
-  
+  var daemonPtr = malloc(Tag.SizeOfPtr.toCSize).asInstanceOf[Ptr[Ptr[MicroHttpdDaemon]]]
+  MicroHttp.start(daemonPtr)
 
-  def getPort(): Int = server.getAddress.getPort
-  def stop(): Unit = server.stop(0)
+  def getPort(): Int = 
+    MicroHttp.port(!daemonPtr)
+
+  def stop(): Unit = {
+    MicroHttp.stop(!daemonPtr)
+    free(daemonPtr)
+  }
 
 }
 
-@extern @link("libmicrohttpd-dev")
+private[requests] trait MicroHttpdDaemon {}
+
+@extern @link("microhttpd")
 private[requests] object MicroHttp {
+  @name("request_scala_start_server")
+  def start(daemon: Ptr[Ptr[MicroHttpdDaemon]]): Int = extern
   
+  @name("request_scala_port")
+  def port(daemon: Ptr[MicroHttpdDaemon]): Int = extern
+
+  @name("request_scala_stop_server")
+  def stop(daemon: Ptr[MicroHttpdDaemon]): Unit = extern
 }

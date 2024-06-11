@@ -32,6 +32,8 @@ object requests extends Module {
 
     override def nativeEmbedResources = true
 
+    def nativeLinkingOptions = Seq("-lmicrohttpd")
+
   }
 
 }

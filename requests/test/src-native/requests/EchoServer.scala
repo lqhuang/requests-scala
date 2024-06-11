@@ -11,19 +11,6 @@ import scala.scalanative.unsafe._
 import scala.scalanative.unsigned._
 import scala.scalanative.runtime.ffi._
 
-object Main {
-  def main(args: Array[String]): Unit = {
-    Zone { implicit z => 
-      val srv = new EchoServer
-      println(srv.getPort)
-
-      scala.io.StdIn.readChar()
-
-      srv.stop
-    }
-  }
-}
-
 private[requests] class EchoServer(implicit z: Zone) {
 
   var daemonPtr = alloc[Ptr[MicroHttpdDaemon]](1)
@@ -42,8 +29,9 @@ private[requests] class EchoServer(implicit z: Zone) {
 
 private[requests] trait MicroHttpdDaemon {}
 
-@link("microhttpd")
 @extern
+@link("microhttpd")
+@define("REQUESTS_SCALA_POTATO")
 object MicroHttp {
   @name("request_scala_start_server")
   def start(daemon: Ptr[Ptr[MicroHttpdDaemon]]): Int = extern

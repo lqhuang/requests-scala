@@ -1,3 +1,4 @@
+#if defined(REQUESTS_SCALA_POTATO)
 #include <microhttpd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -98,3 +99,4 @@ int requests_scala_port(struct MHD_Daemon *daemon) {
 void requests_scala_stop_server(struct MHD_Daemon *daemon) {
     MHD_stop_daemon(daemon);
 }
+#endif

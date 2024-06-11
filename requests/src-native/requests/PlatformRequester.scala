@@ -16,6 +16,8 @@ import CurlUrlCode.CurlUrlCode
 import CurlMultiCode.CurlMultiCode
 import requests.RequestBlob.ByteSourceRequestBlob
 import java.io.ByteArrayInputStream
+import java.util.zip.GZIPInputStream
+import java.util.zip.InflaterInputStream
 
 // TODO
 // you need to install libcurl 
@@ -65,6 +67,7 @@ private[requests] object PlatformRequester {
       Zone { implicit z =>
         val ccurl = libcurlPlatformCompat.instance
         val handle = ccurl.init
+        handle.setOpt(CurlOption.Verbose)
 
         if (handle == null) {
           // As per curl docs:
@@ -85,7 +88,9 @@ private[requests] object PlatformRequester {
 
           params.foreach {
             case (k, v) => 
-              ensureUrlOk(curlu.set(CurlUrlPart.Query, s"$k=$v", CurlUrlFlag.Urlencode, CurlUrlFlag.Appendquery))
+              // libcurl has a flag to urlencode, but it seemed to encode the values but not the keys
+              // however, the appendquery flag is still useful, so we encode one by one
+              ensureUrlOk(curlu.set(CurlUrlPart.Query, Util.urlEncodeSingle(k, v), CurlUrlFlag.Appendquery))
           }
           // As per curl docs:
           // > To specify port number in this string, append :[port] to the end of the 
@@ -134,6 +139,10 @@ private[requests] object PlatformRequester {
             headersSlist = appendHeader(headersSlist, "Authorization", v)
           )
 
+          // TODO double-check how to solve this
+          // this disables Expect: 100-continue
+          headersSlist = appendHeader(headersSlist, "Expect", "")
+
           ensureOk(handle.setOpt(CurlOption.TimeoutMs, readTimeout), "could not set timeout")
 
           ensureOk(handle.setOpt(CurlOption.ConnectTimeoutMs, connectTimeout), "could not set connect timeout")
@@ -157,15 +166,10 @@ private[requests] object PlatformRequester {
           }      
           
           ensureOk(handle.setOpt(CurlOption.HttpHeader, headersSlist), "could not set headers")
+
           ensureOk(handle.setOpt(CurlOption.Url, curlu.get(CurlUrlPart.Url)._2), "could not set url")
           
           // TODO handle url get fails
-
-          // TODO setup upload
-
-
-          // TODO setup header read
-          // TODO set up body read
 
           val headerData = alloc[CStruct3[Ptr[Curl], Boolean, Array[Byte]]](1)
           headerData._1 = handle
@@ -185,7 +189,8 @@ private[requests] object PlatformRequester {
               userdata._3 = userdata._3 ++  arr
             }
 
-            nitems * size
+            val res = nitems * size
+            res
 
           })
 
@@ -204,7 +209,8 @@ private[requests] object PlatformRequester {
                 val arr = new Array[Byte]((nitems * size).toInt)
                 ffi.memcpy(arr.at(0), buffer, nitems * size)
                 !userdata = arr
-                nitems * size
+                val res = nitems * size
+                res
               }
           })
 
@@ -216,11 +222,12 @@ private[requests] object PlatformRequester {
 
           val readFunction = CFuncPtr.toPtr(CFuncPtr4.fromScalaFunction[Ptr[Byte], CSize, CSize, Ptr[Array[Byte]], CSize]{(buffer, size, nitems, userdata) =>
             if (!userdata == null) {
+              println("R: Pause")
               Curl.ReadfuncPause.toCSize
             } else if ((!userdata).size == 0) {
+              println("R: Done")
               0.toCSize
             } else {
-
               val dataSize = (!userdata).size
               
               val toPull = Math.min((nitems * size).toInt, dataSize)
@@ -233,7 +240,9 @@ private[requests] object PlatformRequester {
                  !userdata = null
                }
 
-              toPull.toCSize
+              val res = toPull.toCSize
+              println(s"R: $res: ${new String(!userdata)}")
+              res
             }
 
           })
@@ -248,25 +257,44 @@ private[requests] object PlatformRequester {
               val bytes = new ByteArrayOutputStream()
               usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
               val byteArray = bytes.toByteArray
-              !readdata = byteArray
+              if (byteArray != null && !byteArray.isEmpty)
+                !readdata = byteArray
+
+              // TODO Is this the right way to set the content length?
+              ensureOk(handle.setOpt(CurlOption.PostFieldSize, byteArray.length), "Failed setting content length")
 
               if (!added) {                
                 ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
                 added = true
               }              
 
+              // TODO this loop probably should be made better
               while ((!readdata) != null) {
-                multi.perform
+                val (code, stillRunning) = multi.perform
+                ensureMultiOk(code, "Failed to perform the request")
+                if (stillRunning > 0 && (!readdata) != null) {
+                  val (code2, asdf) = multi.wait_(1000)
+                  ensureMultiOk(code2, "Failed to perform the request")
+                }
               }
 
               !readdata = new Array(0)
-              multi.perform
+              // This is to force the read function to get invoked again to allow it to return
+              // 0, indicating that the read is done
+              val (code, stillRunning) = multi.perform
+              ensureMultiOk(code, "Failed to perform the request")
               
-              // TODO headers?
             } else {
-              // connection.setChunkedStreamingMode(0)
               usingOutputStream(compress.wrap(new OutputStream {
                 override def write(b: Int): Unit = {
+                  // the last byte wasn't flushed yet
+                  // TODO
+                  // while ((!readdata) != null) {
+                  //   println("a")
+                  //   val (code, still) = multi.perform
+                  //   ensureMultiOk(code, "TODO")
+                  // }
+
                   !readdata = Array(1)
                   (!readdata).update(0, b.toByte)
                   if (!added) {                
@@ -281,6 +309,7 @@ private[requests] object PlatformRequester {
                 }
 
                 override def close(): Unit =  {
+                  println("CLOSE")
                   !readdata = Array()
                   if (!added) {                
                     ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
@@ -338,7 +367,7 @@ private[requests] object PlatformRequester {
                 (k, v + next) :: acc
               } else {
                 val (k, v) = next.splitAt(colon)
-                (k, v.drop(1).trim()) :: acc
+                (k.toLowerCase(), v.drop(1).trim()) :: acc
               }
             }.reverse.groupMap(_._1)(_._2)
 
@@ -348,15 +377,18 @@ private[requests] object PlatformRequester {
 
           // TODO redirect handling
 
-          onHeadersReceived(
-            StreamHeaders(
+          val streamHeaders =  StreamHeaders(
               url,
               status,
               "Hek", // TODO
               responseHeaders,
               redirectedFrom
             )
-          )
+
+          val deGzip = autoDecompress && responseHeaders.get("content-encoding").toSeq.flatten.exists(_.contains("gzip"))
+          val deDeflate = autoDecompress && responseHeaders.get("content-encoding").toSeq.flatten.exists(_.contains("deflate"))
+
+          onHeadersReceived(streamHeaders)
 
           val input = new InputStream {
 
@@ -366,7 +398,7 @@ private[requests] object PlatformRequester {
 
             override def read(): Int =  {
 
-              if (done) {
+              val res = if (done) {
                 -1
               } else {
 
@@ -402,13 +434,42 @@ private[requests] object PlatformRequester {
                 }
 
               }
+
+              res
             }
              
           }
 
             
-          val res = f(input)
-          res
+          def processWrappedStream[V](f: java.io.InputStream => V): V = {
+            // The HEAD method is identical to GET except that the server
+            // MUST NOT return a message-body in the response.
+            // https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html section 9.4
+            if (upperCaseVerb == "HEAD") f(new ByteArrayInputStream(Array()))
+            else {
+              try f(
+                if (deGzip) new GZIPInputStream(input)
+                else if (deDeflate) new InflaterInputStream(input)
+                else input
+              ) finally if (!keepAlive) ??? // TODO
+            }
+          }
+
+          if (streamHeaders.is2xx || !check) processWrappedStream(f)
+          else {
+            val errorOutput = new ByteArrayOutputStream()
+            processWrappedStream(geny.Internal.transfer(_, errorOutput))
+            throw new RequestFailedException(
+              Response(
+                streamHeaders.url,
+                streamHeaders.statusCode,
+                streamHeaders.statusMessage,
+                new geny.Bytes(errorOutput.toByteArray),
+                streamHeaders.headers,
+                streamHeaders.history
+              )
+            )
+          }
                   
         } finally {
           multi.remove(handle)
@@ -467,9 +528,6 @@ object Main {
   def main(args: Array[String]): Unit = {
     val data = new ByteArrayInputStream(List.fill(1_000_000)("hello").mkString(" ").getBytes())
     val result = requests.post("http://localhost:8080", data = data)
-    println(result.statusCode)
-    println(result.headers.mkString("\n"))
-    println(result.data)
   }
 
 

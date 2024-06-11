@@ -71,9 +71,11 @@ private[requests] object CurlMulti {
       Zone { implicit z =>
         val messagesInQueue = alloc[Int](1)
         val msg = ccurl.multiInfoRead(multi, messagesInQueue)
-        val res = if (msg != null)
-          new CurlMessage(CurlMessageMessage(msg._1), msg._2, msg._3)
-        else 
+        val res = if (msg != null) {
+          val msgStr =  CurlMessageMessage(msg._1)          
+          println(msgStr)
+          new CurlMessage(msgStr, msg._2, msg._3)
+        } else 
           null
 
         (res, !messagesInQueue)
@@ -84,12 +86,11 @@ private[requests] object CurlMulti {
       infoRead match {
         case (null, 0) => Seq.empty
         case (msg, i) => 
-          val buffer = new ArrayBuffer[CurlMessage](i)
-          buffer :+ msg
-
+          val buffer = new ArrayBuffer[CurlMessage](i + 1)
+          buffer.addOne(msg)
           var next = infoRead
           while (next._1 != null) {
-            buffer :+ next._1
+            buffer.addOne(next._1)
             next = infoRead
           }
 
@@ -223,7 +224,7 @@ private[requests] object Curl {
             fromCString(first._1) ->  
               fromCString(first._2)
 
-          res.append(scalaHeader)
+          res.addOne(scalaHeader)
 
           next = ccurl.nextHeader(curl, flagsMask.toUInt, -1, next)
           
@@ -409,8 +410,8 @@ private[requests] trait CCurl {
 private[requests] object CurlMessageMessage extends Enumeration {
   type CurlMessageMessage = Value
   val None = Value(0, "CURLMSG_NONE")
-  val Done = Value(0, "CURLMSG_DONE")
-  val Last = Value(0, "CURLMSG_LAST")
+  val Done = Value(1, "CURLMSG_DONE")
+  val Last = Value(2, "CURLMSG_LAST")
   
 }
 
@@ -418,13 +419,13 @@ private[requests] object CurlHeaderCode extends Enumeration {
   type CurlHeaderCode = Value
 
   val Ok = Value(0, "CURLHE_OK")
-  val Badindex = Value(0, "CURLHE_BADINDEX")
-  val Missing = Value(0, "CURLHE_MISSING")
-  val Noheaders = Value(0, "CURLHE_NOHEADERS")
-  val Norequest = Value(0, "CURLHE_NOREQUEST")
-  val OutOfMemory = Value(0, "CURLHE_OUT_OF_MEMORY")
-  val BadArgument = Value(0, "CURLHE_BAD_ARGUMENT")
-  val NotBuiltIn = Value(0, "CURLHE_NOT_BUILT_IN")
+  val Badindex = Value(1, "CURLHE_BADINDEX")
+  val Missing = Value(2, "CURLHE_MISSING")
+  val Noheaders = Value(3, "CURLHE_NOHEADERS")
+  val Norequest = Value(4, "CURLHE_NOREQUEST")
+  val OutOfMemory = Value(5, "CURLHE_OUT_OF_MEMORY")
+  val BadArgument = Value(6, "CURLHE_BAD_ARGUMENT")
+  val NotBuiltIn = Value(7, "CURLHE_NOT_BUILT_IN")
 }
 
 private[requests] object CurlMultiCode extends Enumeration {

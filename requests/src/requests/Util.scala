@@ -19,8 +19,12 @@ object Util {
   }
 
   def urlEncode(x: Iterable[(String, String)]) = {
-    x.map{case (k, v) => URLEncoder.encode(k, "UTF-8") + "=" + URLEncoder.encode(v, "UTF-8")}
+    x.map{ case (k, v) => urlEncodeSingle(k, v) }
       .mkString("&")
+  }
+
+  def urlEncodeSingle(k: String, v: String): String = {
+    URLEncoder.encode(k, "UTF-8") + "=" + URLEncoder.encode(v, "UTF-8")  
   }
 
 }

@@ -1,4 +1,4 @@
-# Requests-Scala 0.8.2
+# Requests-Scala 0.9.0-RC1
 
 [![Join the chat at https://gitter.im/lihaoyi/requests-scala](https://badges.gitter.im/lihaoyi/requests-scala.svg)](https://gitter.im/lihaoyi/requests-scala?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
@@ -26,7 +26,7 @@ For a hands-on introduction to this library, take a look at the following blog p
 
 ## Contents
 
-- [Requests-Scala 0.8.2](#requests-scala-081)
+- [Requests-Scala 0.8.3](#requests-scala-081)
   - [Contents](#contents)
   - [Getting Started](#getting-started)
   - [Making a Request](#making-a-request)
@@ -65,9 +65,9 @@ For a hands-on introduction to this library, take a look at the following blog p
 Use the following import to get you started:
 
 ```scala
-ivy"com.lihaoyi::requests:0.8.2" // mill
-"com.lihaoyi" %% "requests" % "0.8.2" // sbt
-compile "com.lihaoyi:requests_2.12:0.8.2" //gradle
+ivy"com.lihaoyi::requests:0.9.0-RC1" // mill
+"com.lihaoyi" %% "requests" % "0.9.0-RC1" // sbt
+compile "com.lihaoyi:requests_2.12:0.9.0-RC1" //gradle
 ```
 
 ## Making a Request
@@ -80,7 +80,7 @@ r.statusCode
 r.headers("content-type")
 // Buffer("application/json; charset=utf-8")
 
-r.text
+r.text()
 // {"login":"lihaoyi","id":934140,"node_id":"MDQ6VXNlcjkzNDE0MA==",...
 ```
 
@@ -154,11 +154,11 @@ r.headers("content-type")
 
 As seen earlier, you can use `.statusCode` and `.headers` to see the relevant
 metadata of your HTTP response. The response data is in the `.data` field of the
-`Response` object. Most often, it's text, which you can decode using the `.text`
+`Response` object. Most often, it's text, which you can decode using the `.text()`
 property as shown below:
 
 ```scala
-r.text
+r.text()
 // [{"id":"7990061484","type":"PushEvent","actor":{"id":6242317,"login":...
 ```
 
@@ -244,7 +244,7 @@ the server:
 ```scala
 val r = requests.get("https://api.github.com/events")
 
-val json = ujson.read(r.text)
+val json = ujson.read(r.text())
 
 json.arr.length
 // 30
@@ -387,7 +387,7 @@ r.cookies
 
 val r2 = requests.get("https://httpbin.org/cookies", cookies = r.cookies)
 
-r2.text
+r2.text()
 // {"cookies":{"freeform":"test"}}
 ```
 
@@ -484,7 +484,7 @@ val sslContext: SSLContext = //initialized sslContext
 
 requests.get(
   "https://client.badssl.com",
-  sslcontext = sslContext
+  sslContext = sslContext
 )
 ```
 
@@ -500,7 +500,7 @@ val r = s.get("https://httpbin.org/cookies/set?freeform=test")
 
 val r2 = s.get("https://httpbin.org/cookies")
 
-r2.text
+r2.text()
 // {"cookies":{"freeform":"test"}}
 ```
 
@@ -519,12 +519,12 @@ val s = requests.Session(
 
 val r1 = s.get("https://httpbin.org/cookies")
 
-r1.text
+r1.text()
 // {"cookies":{"cookie":"vanilla"}}
 
 val r2 = s.get("https://httpbin.org/headers")
 
-r2.text
+r2.text()
 // {"headers":{"X-Special-Header":"omg", ...}}
 ```
 
@@ -558,7 +558,7 @@ val r = requests.get(
   params = Map("q" -> "http language:scala", "sort" -> "stars")
 )
 
-r.text
+r.text()
 // {"login":"lihaoyi","id":934140,"node_id":"MDQ6VXNlcjkzNDE0MA==",...
 ```
 ```scala
@@ -660,11 +660,9 @@ know.
 As it turns out, Kenneth Reitz's Requests is
 [not a lot of code](https://github.com/requests/requests/tree/main/requests).
 Most of the heavy lifting is done in other libraries, and his library is a just
-thin-shim that makes the API 10x better. It turns out on the JVM most of the
-heavy lifting is also done for you, by `java.net.HttpUrlConnection` in the
-simplest case, and other libraries like
-[AsyncHttpClient](https://github.com/AsyncHttpClient/async-http-client) for more
-advanced use cases.
+thin-shim that makes the API 10x better. Similarly, it turns out on the JVM most of the
+heavy lifting is also done for you. There have always been options, but
+since JDK 11 a decent HTTP client is provided in the standard library.
 
 Given that's the case, how hard can it be to port over a dozen Python files to
 Scala? This library attempts to do that: class by class, method by method,
@@ -674,6 +672,16 @@ polished, but you should definitely try it out as the HTTP client for your next
 codebase or project!
 
 ## Changelog
+
+### 0.9.0-RC1
+
+- Use JDK 11 HttpClient ([#158](https://github.com/com-lihaoyi/requests-scala/pull/158)). Note
+  that this means we are dropping compatibility with JDK 8, and will require JDK 11 and above
+  going forward. People who need to use JDK 8 can continue using version 0.8.3
+
+### 0.8.3
+
+- Fix handling of HTTP 304 ([#159](https://github.com/com-lihaoyi/requests-scala/pull/159))
 
 ### 0.8.2
 

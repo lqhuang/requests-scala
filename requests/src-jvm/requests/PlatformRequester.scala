@@ -39,9 +39,6 @@ private[requests] object PlatformRequester {
              chunkedUpload: Boolean,
              redirectedFrom: Option[Response],
              onHeadersReceived: StreamHeaders => Unit): geny.Readable = new geny.Readable {
-
-    private val upperCaseVerb = verb.toUpperCase
-
     def readBytesThrough[T](f: java.io.InputStream => T): T = {
 
       val url0 = new java.net.URL(url)
@@ -52,197 +49,201 @@ private[requests] object PlatformRequester {
         new java.net.URL(url + firstSep + encodedParams)
       } else url0
 
-      var connection: HttpURLConnection = null
-
-      try {
-
-        val conn =
-          if (proxy == null) url1.openConnection
-          else {
-            val (ip, port) = proxy
-            val p = new java.net.Proxy(
-              java.net.Proxy.Type.HTTP, new InetSocketAddress(ip, port)
-            )
-            url1.openConnection(p)
-          }
-
-        connection = conn match{
-          case c: HttpsURLConnection =>
-            if (cert != null) {
-              c.setSSLSocketFactory(UtilJvm.clientCertSocketFactory(cert, verifySslCerts))
-              if (!verifySslCerts) c.setHostnameVerifier(new HostnameVerifier { def verify(h: String, s: SSLSession) = true })
-            } else if (sslContext != null) {
-              c.setSSLSocketFactory(sslContext.getSocketFactory)
-              if (!verifySslCerts) c.setHostnameVerifier(new HostnameVerifier { def verify(h: String, s: SSLSession) = true })
-            } else if (!verifySslCerts) {
-              c.setSSLSocketFactory(UtilJvm.noVerifySocketFactory)
-              c.setHostnameVerifier(new HostnameVerifier { def verify(h: String, s: SSLSession) = true })
-            }
-            c
-          case c: HttpURLConnection => c
-        }
-
-        connection.setInstanceFollowRedirects(false)
-        if (Requester.officialHttpMethods.contains(upperCaseVerb)) {
-          connection.setRequestMethod(upperCaseVerb)
-        } else {
-          // HttpURLConnection enforces a list of official http METHODs, but not everyone abides by the spec
-          // this hack allows us set an unofficial http method
-          connection match {
-            case cs: HttpsURLConnection =>
-              cs.getClass.getDeclaredFields.find(_.getName == "delegate").foreach{ del =>
-                del.setAccessible(true)
-                methodField.set(del.get(cs), upperCaseVerb)
-              }
-            case c =>
-              methodField.set(c, upperCaseVerb)
-          }
-        }
-
-        for((k, v) <- blobHeaders) connection.setRequestProperty(k, v)
-
-        for((k, v) <- sess.headers) connection.setRequestProperty(k, v)
-
-        for((k, v) <- headers) connection.setRequestProperty(k, v)
-
-        for((k, v) <- compress.headers) connection.setRequestProperty(k, v)
-
-        connection.setReadTimeout(readTimeout)
-        auth.header.foreach(connection.setRequestProperty("Authorization", _))
-        connection.setConnectTimeout(connectTimeout)
-        connection.setUseCaches(false)
-        connection.setDoOutput(true)
-
-        val sessionCookieValues = for{
-          c <- (sess.cookies ++ cookies).valuesIterator
-          if !c.hasExpired
-          if c.getDomain == null || c.getDomain == url1.getHost
-          if c.getPath == null || url1.getPath.startsWith(c.getPath)
-        } yield (c.getName, c.getValue)
-
-        val allCookies = sessionCookieValues ++ cookieValues
-        if (allCookies.nonEmpty){
-          connection.setRequestProperty(
-            "Cookie",
-            allCookies
-              .map{case (k, v) => s"""$k="$v""""}
-              .mkString("; ")
+      val httpClient: HttpClient =
+        HttpClient
+          .newBuilder()
+          .followRedirects(HttpClient.Redirect.NEVER)
+          .proxy(proxy match {
+            case null       => ProxySelector.getDefault
+            case (ip, port) => ProxySelector.of(new InetSocketAddress(ip, port))
+          })
+          .sslContext(
+            if (cert != null)
+              Util.clientCertSSLContext(cert, verifySslCerts)
+            else if (sslContext != null)
+              sslContext
+            else if (!verifySslCerts)
+              Util.noVerifySSLContext
+            else
+              SSLContext.getDefault
           )
-        }      
+          .connectTimeout(Duration.ofMillis(connectTimeout))
+          .build()
 
-        if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
-          if (!chunkedUpload) {
-            val bytes = new ByteArrayOutputStream()
-            usingOutputStream(compress.wrap(bytes)) { os => data.write(os) }
-            val byteArray = bytes.toByteArray
-            connection.setFixedLengthStreamingMode(byteArray.length)
-            usingOutputStream(connection.getOutputStream) { os => os.write(byteArray) }
+      val sessionCookieValues = for {
+        c <- (sess.cookies ++ cookies).valuesIterator
+        if !c.hasExpired
+        if c.getDomain == null || c.getDomain == url1.getHost
+        if c.getPath == null || url1.getPath.startsWith(c.getPath)
+      } yield (c.getName, c.getValue)
+
+      val allCookies = sessionCookieValues ++ cookieValues
+
+      val (contentLengthHeader, otherBlobHeaders) = blobHeaders.partition(_._1.equalsIgnoreCase("Content-Length"))
+
+      val allHeaders =
+        otherBlobHeaders ++
+          sess.headers ++
+          headers ++
+          compress.headers ++
+          auth.header.map("Authorization" -> _) ++
+          (if (allCookies.isEmpty) None
+          else Some("Cookie" -> allCookies
+            .map { case (k, v) => s"""$k="$v"""" }
+            .mkString("; ")
+          ))
+      val allHeadersFlat = allHeaders.toList.flatMap { case (k, v) => Seq(k, v) }
+
+      val requestBodyInputStream = new PipedInputStream()
+      val requestBodyOutputStream = new PipedOutputStream(requestBodyInputStream)
+
+      val bodyPublisher: HttpRequest.BodyPublisher =
+        HttpRequest.BodyPublishers.ofInputStream(new Supplier[InputStream] {
+          override def get() = requestBodyInputStream
+        })
+
+      val requestBuilder =
+        HttpRequest.newBuilder()
+          .uri(url1.toURI)
+          .timeout(Duration.ofMillis(readTimeout))
+          .headers(allHeadersFlat: _*)
+          .method(upperCaseVerb,
+            (contentLengthHeader.headOption.map(_._2), compress) match {
+              case (Some("0"), _)           => HttpRequest.BodyPublishers.noBody()
+              case (Some(n), Compress.None) => HttpRequest.BodyPublishers.fromPublisher(bodyPublisher, n.toInt)
+              case _                        => bodyPublisher
+            }
+          )
+
+      val fut = httpClient.sendAsync(requestBuilder.build(), HttpResponse.BodyHandlers.ofInputStream())
+
+      usingOutputStream(compress.wrap(requestBodyOutputStream)) { os =>
+        data.write(os)
+      }
+
+      val response =
+        try
+          fut.get()
+        catch {
+          case e: ExecutionException =>
+            throw e.getCause match {
+              case e: javax.net.ssl.SSLHandshakeException                   => new InvalidCertException(url, e)
+              case _: HttpConnectTimeoutException | _: HttpTimeoutException =>
+                new TimeoutException(url, readTimeout, connectTimeout)
+              case e: java.net.UnknownHostException                         =>
+                new UnknownHostException(url, e.getMessage)
+              case e: java.net.ConnectException                             =>
+                new UnknownHostException(url, e.getMessage)
+              case e                                                        =>
+                new RequestsException(e.getMessage, Some(e))
+            }
+        }
+
+      val responseCode = response.statusCode()
+      val headerFields =
+        response.headers().map.asScala
+          .filter(_._1 != null)
+          .map { case (k, v) => (k.toLowerCase(), v.asScala.toList) }.toMap
+
+      val deGzip = autoDecompress && headerFields.get("content-encoding").toSeq.flatten.exists(_.contains("gzip"))
+      val deDeflate =
+        autoDecompress && headerFields.get("content-encoding").toSeq.flatten.exists(_.contains("deflate"))
+      def persistCookies() = {
+        if (sess.persistCookies) {
+          headerFields
+            .get("set-cookie")
+            .iterator
+            .flatten
+            .flatMap(HttpCookie.parse(_).asScala)
+            .foreach(c => sess.cookies(c.getName) = c)
+        }
+      }
+
+      if (responseCode.toString.startsWith("3") &&
+            responseCode.toString != "304" &&
+            maxRedirects > 0) {
+        val out = new ByteArrayOutputStream()
+        Util.transferTo(response.body, out)
+        val bytes = out.toByteArray
+
+        val current = Response(
+          url = url,
+          statusCode = responseCode,
+          statusMessage = StatusMessages.byStatusCode.getOrElse(responseCode, ""),
+          data = new geny.Bytes(bytes),
+          headers = headerFields,
+          history = redirectedFrom
+        )
+        persistCookies()
+        val newUrl = current.headers("location").head
+        stream(
+          url = new URL(url1, newUrl).toString,
+          auth = auth,
+          params = params,
+          blobHeaders = blobHeaders,
+          headers = headers,
+          data = data,
+          readTimeout = readTimeout,
+          connectTimeout = connectTimeout,
+          proxy = proxy,
+          cert = cert,
+          sslContext = sslContext,
+          cookies = cookies,
+          cookieValues = cookieValues,
+          maxRedirects = maxRedirects - 1,
+          verifySslCerts = verifySslCerts,
+          autoDecompress = autoDecompress,
+          compress = compress,
+          keepAlive = keepAlive,
+          check = check,
+          chunkedUpload = chunkedUpload,
+          redirectedFrom = Some(current),
+          onHeadersReceived = onHeadersReceived
+        ).readBytesThrough(f)
+      } else {
+        persistCookies()
+        val streamHeaders = StreamHeaders(
+          url = url,
+          statusCode = responseCode,
+          statusMessage = StatusMessages.byStatusCode.getOrElse(responseCode, ""),
+          headers = headerFields,
+          history = redirectedFrom
+        )
+        if (onHeadersReceived != null) onHeadersReceived(streamHeaders)
+
+        val stream = response.body()
+
+        def processWrappedStream[V](f: java.io.InputStream => V): V = {
+          // The HEAD method is identical to GET except that the server
+          // MUST NOT return a message-body in the response.
+          // https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html section 9.4
+          if (upperCaseVerb == "HEAD") f(new ByteArrayInputStream(Array()))
+          else if (stream != null) {
+            try f(
+              if (deGzip) new GZIPInputStream(stream)
+              else if (deDeflate) new InflaterInputStream(stream)
+              else stream
+            ) finally if (!keepAlive) stream.close()
           } else {
-            connection.setChunkedStreamingMode(0)
-            usingOutputStream(compress.wrap(connection.getOutputStream)) { os => data.write(os) }
+            f(new ByteArrayInputStream(Array()))
           }
         }
 
-        val (responseCode, responseMsg, headerFields) = try {(
-          connection.getResponseCode,
-          connection.getResponseMessage,
-          connection.getHeaderFields.asScala
-            .filter(_._1 != null)
-            .map{case (k, v) => (k.toLowerCase(), v.asScala.toSeq)}.toMap
-        )} catch{
-          case e: java.net.SocketTimeoutException =>
-            throw new TimeoutException(url, readTimeout, connectTimeout)
-          case e: java.net.UnknownHostException =>
-            throw new UnknownHostException(url, e.getMessage)
-          case e: javax.net.ssl.SSLHandshakeException =>
-            throw new InvalidCertException(url, e)
-        }
-
-        val deGzip = autoDecompress && headerFields.get("content-encoding").toSeq.flatten.exists(_.contains("gzip"))
-        val deDeflate = autoDecompress && headerFields.get("content-encoding").toSeq.flatten.exists(_.contains("deflate"))
-        def persistCookies() = {
-          if (sess.persistCookies) {
-            headerFields
-              .get("set-cookie")
-              .iterator
-              .flatten
-              .flatMap(HttpCookie.parse(_).asScala)
-              .foreach(c => sess.cookies(c.getName) = c)
-          }
-        }
-
-        if (responseCode.toString.startsWith("3") && maxRedirects > 0){
-          val out = new ByteArrayOutputStream()
-          Util.transferTo(connection.getInputStream, out)
-          val bytes = out.toByteArray
-
-          val current = Response(
-            url,
-            responseCode,
-            responseMsg,
-            new geny.Bytes(bytes),
-            headerFields,
-            redirectedFrom
-          )
-          persistCookies()
-          val newUrl = current.headers("location").head
-          apply(
-            verb, sess,
-            new java.net.URL(url1, newUrl).toString, auth, params, blobHeaders,
-            headers, data, readTimeout, connectTimeout, proxy, cert, sslContext, cookies,
-            cookieValues, maxRedirects - 1, verifySslCerts, autoDecompress,
-            compress, keepAlive, check, chunkedUpload, Some(current),
-            onHeadersReceived
-          ).readBytesThrough(f)
-        }else{
-          persistCookies()
-          val streamHeaders = StreamHeaders(
-            url,
-            responseCode,
-            responseMsg,
-            headerFields,
-            redirectedFrom
-          )
-          if (onHeadersReceived != null) onHeadersReceived(streamHeaders)
-
-          val stream =
-            if (connection.getResponseCode.toString.startsWith("2")) connection.getInputStream
-            else connection.getErrorStream
-
-          def processWrappedStream[V](f: java.io.InputStream => V): V = {
-            // The HEAD method is identical to GET except that the server
-            // MUST NOT return a message-body in the response.
-            // https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html section 9.4
-            if (upperCaseVerb == "HEAD") f(new ByteArrayInputStream(Array()))
-            else if (stream != null) {
-              try f(
-                if (deGzip) new GZIPInputStream(stream)
-                else if (deDeflate) new InflaterInputStream(stream)
-                else stream
-              ) finally if (!keepAlive) stream.close()
-            }else{
-              f(new ByteArrayInputStream(Array()))
-            }
-          }
-
-          if (streamHeaders.is2xx || !check) processWrappedStream(f)
-          else {
-            val errorOutput = new ByteArrayOutputStream()
-            processWrappedStream(geny.Internal.transfer(_, errorOutput))
-            throw new RequestFailedException(
-              Response(
-                streamHeaders.url,
-                streamHeaders.statusCode,
-                streamHeaders.statusMessage,
-                new geny.Bytes(errorOutput.toByteArray),
-                streamHeaders.headers,
-                streamHeaders.history
-              )
+        if (streamHeaders.statusCode == 304 || streamHeaders.is2xx || !check) processWrappedStream(f)
+        else {
+          val errorOutput = new ByteArrayOutputStream()
+          processWrappedStream(geny.Internal.transfer(_, errorOutput))
+          throw new RequestFailedException(
+            Response(
+              url = streamHeaders.url,
+              statusCode = streamHeaders.statusCode,
+              statusMessage = streamHeaders.statusMessage,
+              data = new geny.Bytes(errorOutput.toByteArray),
+              headers = streamHeaders.headers,
+              history = streamHeaders.history
             )
-          }
+          )
         }
-      } finally if (!keepAlive && connection != null) {
-        connection.disconnect()
       }
     }
   }

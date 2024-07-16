@@ -13,9 +13,12 @@ private[requests] class EchoServer extends HttpHandler {
   server.createContext("/echo", this)
   server.setExecutor(null); // default executor
   server.start()
+
   def getPort(): Int = server.getAddress.getPort
+
   def stop(): Unit = server.stop(0)
-  override def handle(t: HttpExchange): Unit = {
+
+  override def handle(t: HttpExchange): Unit = try {
     val h: java.util.List[String] =
       t.getRequestHeaders.get("Content-encoding")
     val c: Compress =
@@ -23,9 +26,13 @@ private[requests] class EchoServer extends HttpHandler {
       else if (h.contains("gzip")) Gzip
       else if (h.contains("deflate")) Deflate
       else None
-    val msg = new ServerUtils.Plumper(c).decompress(t.getRequestBody)
+    val msg = new Plumper(c).decompress(t.getRequestBody)
     t.sendResponseHeaders(200, msg.length)
     t.getResponseBody.write(msg.getBytes())
+  } catch {
+    case e: Exception =>
+      e.printStackTrace()
+      t.sendResponseHeaders(500, -1)
   }
 }
 

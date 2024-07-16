@@ -18,6 +18,7 @@ import requests.RequestBlob.ByteSourceRequestBlob
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.InflaterInputStream
+import java.util.Arrays
 
 // TODO
 // you need to install libcurl 
@@ -164,6 +165,10 @@ private[requests] object PlatformRequester {
               headersSlist = appendHeader(headersSlist, "Cookie", cookieValue)
             
           }      
+
+          if (chunkedUpload) {
+            headersSlist = appendHeader(headersSlist, "Transfer-Encoding", "chunked")
+          }
           
           ensureOk(handle.setOpt(CurlOption.HttpHeader, headersSlist), "could not set headers")
 
@@ -222,13 +227,14 @@ private[requests] object PlatformRequester {
 
           val readFunction = CFuncPtr.toPtr(CFuncPtr4.fromScalaFunction[Ptr[Byte], CSize, CSize, Ptr[Array[Byte]], CSize]{(buffer, size, nitems, userdata) =>
             if (!userdata == null) {
-              println("R: Pause")
+          //     println(s"${scala.io.AnsiColor.RED}R: Pause${scala.io.AnsiColor.RESET}")
               Curl.ReadfuncPause.toCSize
             } else if ((!userdata).size == 0) {
-              println("R: Done")
+          //     println(s"${scala.io.AnsiColor.RED}R: Done${scala.io.AnsiColor.RESET}")
               0.toCSize
             } else {
               val dataSize = (!userdata).size
+              val pre = new String(!userdata)
               
               val toPull = Math.min((nitems * size).toInt, dataSize)
               ffi.memcpy(
@@ -241,7 +247,7 @@ private[requests] object PlatformRequester {
                }
 
               val res = toPull.toCSize
-              println(s"R: $res: ${new String(!userdata)}")
+          //     println(s"${scala.io.AnsiColor.RED}R: $res: ${new String(pre)}${scala.io.AnsiColor.RESET}")
               res
             }
 
@@ -261,7 +267,7 @@ private[requests] object PlatformRequester {
                 !readdata = byteArray
 
               // TODO Is this the right way to set the content length?
-              ensureOk(handle.setOpt(CurlOption.PostFieldSize, byteArray.length), "Failed setting content length")
+              ensureOk(handle.setOpt(CurlOption.PostFieldSize, byteArray.length), "Failed setting in file size")
 
               if (!added) {                
                 ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
@@ -287,45 +293,75 @@ private[requests] object PlatformRequester {
             } else {
               usingOutputStream(compress.wrap(new OutputStream {
                 override def write(b: Int): Unit = {
-                  // the last byte wasn't flushed yet
-                  // TODO
-                  // while ((!readdata) != null) {
-                  //   println("a")
-                  //   val (code, still) = multi.perform
-                  //   ensureMultiOk(code, "TODO")
-                  // }
 
-                  !readdata = Array(1)
-                  (!readdata).update(0, b.toByte)
                   if (!added) {                
                     ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
                     added = true
                   }              
 
+                  if ((!readdata) != null) {
+                    ensureOk(handle.pause(CurlPauseFlag.PauseSend), "Could not pause")
+                    if ((!readdata) != null) {
+                      val newArray = Arrays.copyOf(!readdata, (!readdata).size + 1)
+                      newArray(newArray.size - 1) = b.toByte
+                      !readdata = newArray
+                    } else {
+                      !readdata = Array(1)
+                      (!readdata)(0) = b.toByte
+                    }
+                  } else {
+                      !readdata = Array(1)
+                      (!readdata)(0) = b.toByte
+                  }
+
+
                   ensureOk(handle.unpause, "Failed unpausing the easy handle")
                   val (code, still_running) = multi.perform
-
                   ensureMultiOk(code, "Failed performing multi transfer")
                 }
 
                 override def close(): Unit =  {
-                  println("CLOSE")
-                  !readdata = Array()
+
+          //         println("a")
                   if (!added) {                
                     ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
                     added = true
                   }              
 
-                  ensureOk(handle.unpause, "Failed unpausing the easy handle")
-                  val (code, still_running) = multi.perform
+                  // flush
+          //         println("b")
+                  if (!readdata == null) {
+                    !readdata = Array()
 
-                  ensureMultiOk(code, "Failed performing multi transfer")
+          //           println("c")
+                    ensureOk(handle.unpause, "Failed unpausing the easy handle")
+                    val (code, still_running) = multi.perform
+          //           println("d")
+
+                    ensureMultiOk(code, "Failed performing multi transfer")
+
+                  } else if ((!readdata).size > 0){
+          //           println("e")
+                    ensureOk(handle.unpause, "Failed unpausing the easy handle")
+          //           println("f")
+                    val (code, still_running) = multi.perform
+          //           println("g")
+                    ensureMultiOk(code, "Failed performing multi transfer")
+                    val (code2, still_running2) = multi.wait_(1000)
+          //           println("h")
+                    ensureMultiOk(code2, "HEKEHK")
+          //           println("i")
+
+                    close()
+                  }
+
                 }
 
               })) { os => data.write(os) }
             }
           }
 
+          // println("FUCKO")
           if (!added) {                
             ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
             added = true
@@ -526,8 +562,8 @@ private[requests] class PlatformRequester(
 object Main {
 
   def main(args: Array[String]): Unit = {
-    val data = new ByteArrayInputStream(List.fill(1_000_000)("hello").mkString(" ").getBytes())
-    val result = requests.post("http://localhost:8080", data = data)
+    val data = new ByteArrayInputStream(List.fill(10)("hello").mkString(" ").getBytes())
+    val result = requests.post("http://localhost:8080/body", data = data, chunkedUpload = true)
   }
 
 

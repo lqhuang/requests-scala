@@ -6,16 +6,29 @@ import java.util.zip.{GZIPInputStream, InflaterInputStream}
 import javax.net.ssl._
 import collection.JavaConverters._
 import scala.collection.mutable
+import java.net.http.HttpClient
+import java.net.ProxySelector
+import java.time.Duration
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
+import java.net.http.HttpRequest
+import java.util.function.Supplier
+import java.io.InputStream
+import java.net.http.HttpResponse
+import java.util.concurrent.ExecutionException
+import java.net.http.HttpConnectTimeoutException
+import java.net.http.HttpTimeoutException
+import java.net.URL
 
 private[requests] object PlatformRequester {
 
   private lazy val methodField: java.lang.reflect.Field = {
     val m = classOf[HttpURLConnection].getDeclaredField("method")
-    m.setAccessible(true)
+
     m
   }
 
-  def apply(verb: String, 
+  def apply(verb: String,
             sess: BaseSession,
              url: String,
              auth: RequestAuth,
@@ -128,7 +141,7 @@ private[requests] object PlatformRequester {
               .map{case (k, v) => s"""$k="$v""""}
               .mkString("; ")
           )
-        }      
+        }
 
         if (upperCaseVerb == "POST" || upperCaseVerb == "PUT" || upperCaseVerb == "PATCH" || upperCaseVerb == "DELETE") {
           if (!chunkedUpload) {
@@ -246,8 +259,8 @@ private[requests] object PlatformRequester {
       }
     }
   }
- 
-  private def usingOutputStream[T](os: OutputStream)(fn: OutputStream => T): Unit = 
+
+  private def usingOutputStream[T](os: OutputStream)(fn: OutputStream => T): Unit =
     try fn(os) finally os.close()
 
 }

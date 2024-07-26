@@ -56,7 +56,6 @@ object Requester{
 }
 case class Requester(verb: String,
                      sess: BaseSession){
-  private val upperCaseVerb = verb.toUpperCase
 
   /**
     * Makes a single HTTP request, and returns a [[Response]] object. Requires
@@ -191,8 +190,7 @@ case class Requester(verb: String,
                  compress, keepAlive, check, chunkedUpload, redirectedFrom,
                  onHeadersReceived
                )
- }
-
+ 
   /**
     * Overload of [[Requester.apply]] that takes a [[Request]] object as configuration
     */

@@ -6,12 +6,25 @@ import java.util.zip.{GZIPInputStream, InflaterInputStream}
 import javax.net.ssl._
 import collection.JavaConverters._
 import scala.collection.mutable
+import java.net.http.HttpClient
+import java.net.ProxySelector
+import java.time.Duration
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
+import java.net.http.HttpRequest
+import java.util.function.Supplier
+import java.io.InputStream
+import java.net.http.HttpResponse
+import java.util.concurrent.ExecutionException
+import java.net.http.HttpConnectTimeoutException
+import java.net.http.HttpTimeoutException
+import java.net.URL
 
 private[requests] object PlatformRequester {
 
   private lazy val methodField: java.lang.reflect.Field = {
     val m = classOf[HttpURLConnection].getDeclaredField("method")
-    m.setAccessible(true)
+  
     m
   }
 
@@ -39,6 +52,9 @@ private[requests] object PlatformRequester {
              chunkedUpload: Boolean,
              redirectedFrom: Option[Response],
              onHeadersReceived: StreamHeaders => Unit): geny.Readable = new geny.Readable {
+
+    private val upperCaseVerb = verb.toUpperCase
+
     def readBytesThrough[T](f: java.io.InputStream => T): T = {
 
       val url0 = new java.net.URL(url)
@@ -59,11 +75,11 @@ private[requests] object PlatformRequester {
           })
           .sslContext(
             if (cert != null)
-              Util.clientCertSSLContext(cert, verifySslCerts)
+              UtilJvm.clientCertSSLContext(cert, verifySslCerts)
             else if (sslContext != null)
               sslContext
             else if (!verifySslCerts)
-              Util.noVerifySSLContext
+              UtilJvm.noVerifySSLContext
             else
               SSLContext.getDefault
           )
@@ -176,7 +192,9 @@ private[requests] object PlatformRequester {
         )
         persistCookies()
         val newUrl = current.headers("location").head
-        stream(
+        apply(
+          verb,
+          sess,
           url = new URL(url1, newUrl).toString,
           auth = auth,
           params = params,

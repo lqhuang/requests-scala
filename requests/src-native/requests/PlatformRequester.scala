@@ -292,8 +292,16 @@ private[requests] object PlatformRequester {
               
             } else {
               usingOutputStream(compress.wrap(new OutputStream {
-                override def write(b: Int): Unit = {
 
+                // TODO buffer?
+
+                override def write(b: Array[Byte]): Unit =
+                  write(b, 0, b.length)
+
+                override def write(b: Array[Byte], off: Int, len: Int): Unit = {
+                  if (off > b.length || off < 0 || len < 0 || len > b.length - off)
+                    throw new IndexOutOfBoundsException()
+      
                   if (!added) {                
                     ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
                     added = true
@@ -302,55 +310,51 @@ private[requests] object PlatformRequester {
                   if ((!readdata) != null) {
                     ensureOk(handle.pause(CurlPauseFlag.PauseSend), "Could not pause")
                     if ((!readdata) != null) {
-                      val newArray = Arrays.copyOf(!readdata, (!readdata).size + 1)
-                      newArray(newArray.size - 1) = b.toByte
+                      val newArray = Arrays.copyOf(!readdata, (!readdata).size + len)
+                      System.arraycopy(b, off, newArray, newArray.size - len, len)
                       !readdata = newArray
                     } else {
-                      !readdata = Array(1)
-                      (!readdata)(0) = b.toByte
+                      !readdata = Arrays.copyOfRange(b, off, len)
                     }
                   } else {
-                      !readdata = Array(1)
-                      (!readdata)(0) = b.toByte
+                      !readdata = Arrays.copyOfRange(b, off, len)
                   }
 
 
                   ensureOk(handle.unpause, "Failed unpausing the easy handle")
                   val (code, still_running) = multi.perform
                   ensureMultiOk(code, "Failed performing multi transfer")
+
+                }
+
+                override def write(b: Int): Unit = {
+                  val arr = Array[Byte](1)
+                  arr(0) = b.toByte
+                  write(arr)
                 }
 
                 override def close(): Unit =  {
 
-          //         println("a")
                   if (!added) {                
                     ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
                     added = true
                   }              
 
                   // flush
-          //         println("b")
                   if (!readdata == null) {
                     !readdata = Array()
 
-          //           println("c")
                     ensureOk(handle.unpause, "Failed unpausing the easy handle")
                     val (code, still_running) = multi.perform
-          //           println("d")
 
                     ensureMultiOk(code, "Failed performing multi transfer")
 
                   } else if ((!readdata).size > 0){
-          //           println("e")
                     ensureOk(handle.unpause, "Failed unpausing the easy handle")
-          //           println("f")
                     val (code, still_running) = multi.perform
-          //           println("g")
                     ensureMultiOk(code, "Failed performing multi transfer")
                     val (code2, still_running2) = multi.wait_(1000)
-          //           println("h")
                     ensureMultiOk(code2, "HEKEHK")
-          //           println("i")
 
                     close()
                   }
@@ -361,7 +365,6 @@ private[requests] object PlatformRequester {
             }
           }
 
-          // println("FUCKO")
           if (!added) {                
             ensureMultiOk(multi.add(handle), "Failed adding easy handle to global multi")
             added = true

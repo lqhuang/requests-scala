@@ -457,3 +457,23 @@ case class Requester(verb: String,
       onHeadersReceived = onHeadersReceived
     )
 }
+
+object Main {
+
+  def main(args: Array[String]): Unit = {
+
+    val data = 
+      new ByteArrayInputStream(List.fill(10)("hello").mkString(" ").getBytes())
+      
+    val result = 
+      requests.post(
+        "http://localhost:8080", 
+        data = new RequestBlob.ByteSourceRequestBlob("hell"),
+        compress = Compress.Gzip
+      )
+
+    println(result.statusCode)
+  }
+
+
+}

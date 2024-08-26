@@ -19,6 +19,7 @@ import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.InflaterInputStream
 import java.util.Arrays
+import scala.util.Using
 
 // TODO
 // you need to install libcurl 
@@ -123,7 +124,9 @@ private[requests] object PlatformRequester {
           }, "Could not set method")
 
 
-          blobHeaders.foreach { case (k, v) => 
+          val (contentLengthHeader, otherBlobHeaders) = blobHeaders.partition(_._1.equalsIgnoreCase("Content-Length"))
+
+          otherBlobHeaders.foreach { case (k, v) => 
             headersSlist = appendHeader(headersSlist, k, v)
           }
           sess.headers.foreach { case (k, v) => 
@@ -561,13 +564,3 @@ private[requests] class PlatformRequester(
   receiver: ByteReceiver
   
 )
-
-object Main {
-
-  def main(args: Array[String]): Unit = {
-    val data = new ByteArrayInputStream(List.fill(10)("hello").mkString(" ").getBytes())
-    val result = requests.post("http://localhost:8080/body", data = data, chunkedUpload = true)
-  }
-
-
-}

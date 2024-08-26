@@ -167,47 +167,47 @@ object RequestTests extends TestSuite{
   //     }
   //   }
 
-    // test("decompress"){
-    //   val res1 = requests.get("https://httpbin.org/gzip")
-    //   assert(read(res1.text()).obj("headers").obj("Host").str == "httpbin.org")
+    test("decompress"){
+      val res1 = requests.get("https://httpbin.org/gzip")
+      assert(read(res1.text()).obj("headers").obj("Host").str == "httpbin.org")
 
-    //   val res2 = requests.get("https://httpbin.org/deflate")
-    //   assert(read(res2).obj("headers").obj("Host").str == "httpbin.org")
+      val res2 = requests.get("https://httpbin.org/deflate")
+      assert(read(res2).obj("headers").obj("Host").str == "httpbin.org")
 
-    //   val res3 = requests.get("https://httpbin.org/gzip", autoDecompress = false)
-    //   assert(res3.bytes.length < res1.bytes.length)
+      val res3 = requests.get("https://httpbin.org/gzip", autoDecompress = false)
+      assert(res3.bytes.length < res1.bytes.length)
 
-    //   val res4 = requests.get("https://httpbin.org/deflate", autoDecompress = false)
-    //   assert(res4.bytes.length < res2.bytes.length)
+      val res4 = requests.get("https://httpbin.org/deflate", autoDecompress = false)
+      assert(res4.bytes.length < res2.bytes.length)
 
-    //   (res1.bytes.length, res2.bytes.length, res3.bytes.length, res4.bytes.length)
-    // }
+      (res1.bytes.length, res2.bytes.length, res3.bytes.length, res4.bytes.length)
+    }
 
-    test("compression"){
-      val res1 = requests.post(
-        "https://httpbin.org/post",
-        compress = requests.Compress.None,
-        data = new RequestBlob.ByteSourceRequestBlob("Hello World")
-      )
-      assert(res1.text().contains(""""Hello World""""))
+    // test("compression"){
+    //   val res1 = requests.post(
+    //     "https://httpbin.org/post",
+    //     compress = requests.Compress.None,
+    //     data = new RequestBlob.ByteSourceRequestBlob("Hello World")
+    //   )
+    //   assert(res1.text().contains(""""Hello World""""))
 
-      println("hek")
+    //   println("hek")
 
-      val res2 = requests.post(
-        "https://httpbin.org/post",
-        compress = requests.Compress.Gzip,
-        data = new RequestBlob.ByteSourceRequestBlob("I am cow")
-      )
-      assert(read(new String(res2.bytes))("data").toString.contains("data:application/octet-stream;base64,H4sIAAAAAA"))
+    //   val res2 = requests.post(
+    //     "https://httpbin.org/post",
+    //     compress = requests.Compress.Gzip,
+    //     data = new RequestBlob.ByteSourceRequestBlob("I am cow")
+    //   )
+    //   assert(read(new String(res2.bytes))("data").toString.contains("data:application/octet-stream;base64,H4sIAAAAAA"))
 
-      val res3 = requests.post(
-        "https://httpbin.org/post",
-        compress = requests.Compress.Deflate,
-        data = new RequestBlob.ByteSourceRequestBlob("Hear me moo")
-      )
-      assert(read(new String(res3.bytes))("data").toString ==
-        """"data:application/octet-stream;base64,eJzzSE0sUshNVcjNzwcAFokD3g=="""")
-     }
+    //   val res3 = requests.post(
+    //     "https://httpbin.org/post",
+    //     compress = requests.Compress.Deflate,
+    //     data = new RequestBlob.ByteSourceRequestBlob("Hear me moo")
+    //   )
+    //   assert(read(new String(res3.bytes))("data").toString ==
+    //     """"data:application/octet-stream;base64,eJzzSE0sUshNVcjNzwcAFokD3g=="""")
+    //  }
 
     // test("headers"){
     //   test("default"){

@@ -10,6 +10,7 @@ import java.util.function.Supplier
 import java.util.zip.{GZIPInputStream, InflaterInputStream}
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.concurrent.{ExecutionException, Future}
 
@@ -77,8 +78,8 @@ case class Requester(verb: String,
     * @param data Body data to pass to this request, for POSTs and PUTs. Can be a
     *             Map[String, String] of form data, bulk data as a String or Array[Byte],
     *             or MultiPart form data.
-    * @param readTimeout How long to wait for data to be read before timing out
-    * @param connectTimeout How long to wait for a connection before timing out
+    * @param readTimeout How many milliseconds to wait for data to be read before timing out
+    * @param connectTimeout How many milliseconds to wait for a connection before timing out
     * @param proxy Host and port of a proxy you want to use
     * @param cert Client certificate configuration
     * @param sslContext Client sslContext configuration
@@ -241,7 +242,12 @@ case class Requester(verb: String,
             .map { case (k, v) => s"""$k="$v"""" }
             .mkString("; ")
           ))
-      val allHeadersFlat = allHeaders.toList.flatMap { case (k, v) => Seq(k, v) }
+      val lastOfEachHeader =
+        allHeaders.foldLeft(ListMap.empty[String, (String, String)]) {
+          case (acc, (k, v)) =>
+            acc.updated(k.toLowerCase, k -> v)
+        }
+      val headersKeyValueAlternating = lastOfEachHeader.values.toList.flatMap { case (k, v) => Seq(k, v) }
 
       val requestBodyInputStream = new PipedInputStream()
       val requestBodyOutputStream = new PipedOutputStream(requestBodyInputStream)
@@ -255,7 +261,7 @@ case class Requester(verb: String,
         HttpRequest.newBuilder()
           .uri(url1.toURI)
           .timeout(Duration.ofMillis(readTimeout))
-          .headers(allHeadersFlat: _*)
+          .headers(headersKeyValueAlternating: _*)
           .method(upperCaseVerb,
             (contentLengthHeader.headOption.map(_._2), compress) match {
               case (Some("0"), _)           => HttpRequest.BodyPublishers.noBody()

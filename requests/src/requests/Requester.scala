@@ -54,9 +54,16 @@ object BaseSession{
 }
 object Requester{
   val officialHttpMethods = Set("GET", "POST", "HEAD", "OPTIONS", "PUT", "DELETE", "TRACE")
+  private lazy val methodField: java.lang.reflect.Field = {
+    val m = classOf[HttpURLConnection].getDeclaredField("method")
+    m.setAccessible(true)
+    m
+  }
 }
 case class Requester(verb: String,
                      sess: BaseSession){
+
+  private val upperCaseVerb = verb.toUpperCase
 
   /**
     * Makes a single HTTP request, and returns a [[Response]] object. Requires
@@ -458,22 +465,3 @@ case class Requester(verb: String,
     )
 }
 
-object Main {
-
-  def main(args: Array[String]): Unit = {
-
-    val data = 
-      new ByteArrayInputStream(List.fill(10)("hello").mkString(" ").getBytes())
-      
-    val result = 
-      requests.post(
-        "http://localhost:8080", 
-        data = new RequestBlob.ByteSourceRequestBlob("hell"),
-        compress = Compress.Gzip
-      )
-
-    println(result.statusCode)
-  }
-
-
-}

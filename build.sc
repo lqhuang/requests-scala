@@ -83,7 +83,8 @@ trait RequestsModule
   trait RequestsTestModule extends TestModule.Utest {
     def ivyDeps = Agg(
       ivy"com.lihaoyi::utest::0.8.4",
-      ivy"com.lihaoyi::ujson::3.3.1"
+      ivy"com.lihaoyi::ujson::3.3.1",
+      ivy"com.dimafeng::testcontainers-scala-core:0.41.3"
     )
   }
 

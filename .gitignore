@@ -1,10 +1,13 @@
 target/
 *.iml
 .idea
+.vscode
 .settings
 .classpath
 .project
 .cache
+.bloop
+.metals
 .sbtserver
 project/.sbtserver
 tags

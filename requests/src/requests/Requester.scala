@@ -62,6 +62,7 @@ object Requester{
 }
 case class Requester(verb: String,
                      sess: BaseSession){
+
   private val upperCaseVerb = verb.toUpperCase
 
   /**
@@ -463,3 +464,4 @@ case class Requester(verb: String,
       onHeadersReceived = onHeadersReceived
     )
 }
+

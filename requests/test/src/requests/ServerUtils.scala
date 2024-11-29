@@ -10,7 +10,8 @@ import scala.collection.mutable.StringBuilder
 
 object ServerUtils {
   def usingEchoServer(f: Int => Unit): Unit = {
-    val server = new EchoServer
+    val server: EchoServer =  ???
+      // new EchoServer
     try f(server.getPort())
     finally server.stop()
   }
@@ -47,7 +48,7 @@ object ServerUtils {
     * @param c
     *   Compression mode
     */
-  private class Plumper(c: Compress) {
+  private[requests] class Plumper(c: Compress) {
 
     private def wrap(is: InputStream): InputStream =
       c match {

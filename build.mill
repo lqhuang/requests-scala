@@ -1,0 +1,74 @@
+//| mill-version: 1.0.0
+//| mvnDeps:
+//| - com.github.lolgab::mill-mima_mill1:0.2.0
+package build
+
+import mill._
+import scalalib._
+import scalanativelib._
+import mill.scalalib.publish.{Developer, License, PomSettings, VersionControl}
+
+import mill.util.VcsVersion
+import com.github.lolgab.mill.mima._
+
+val scalaNextVersion = sys.props.get("scalaNextVersion")
+val scalaVersions = List("2.12.20", "2.13.15", "3.3.4") ++ scalaNextVersion
+val scalaNativeVer = "0.5.6"
+
+trait MimaCheck extends Mima {
+   def mimaPreviousVersions = Seq("0.6.9", "0.7.0", "0.7.1", "0.8.0","0.8.2", "0.9.0").distinct
+
+  override def mimaBinaryIssueFilters = Seq(
+    ProblemFilter.exclude[ReversedMissingMethodProblem]("requests.BaseSession.send"),
+    ProblemFilter.exclude[DirectMissingMethodProblem]("requests.Response.string"),
+  )
+}
+
+trait RequestsPublishModule extends PublishModule with MimaCheck {
+  def artifactName = "requests"
+
+  def publishVersion = VcsVersion.vcsState().format()
+
+  def pomSettings = PomSettings(
+    description = "Scala port of the popular Python Requests HTTP client",
+    organization = "com.lihaoyi",
+    url = "https://github.com/com-lihaoyi/requests-scala",
+    licenses = Seq(License.MIT),
+    versionControl = VersionControl.github("com-lihaoyi", "requests-scala"),
+    developers = Seq(
+      Developer("lihaoyi", "Li Haoyi", "https://github.com/lihaoyi")
+    )
+  )
+
+  def mvnDeps = Seq(mvn"com.lihaoyi::geny::1.1.1")
+}
+
+trait RequestsCrossScalaModule extends CrossScalaModule with ScalaModule {
+  def moduleDir = build.moduleDir / "requests"
+  def sources = Task.Sources("src")
+}
+
+trait RequestsTestModule extends TestModule.Utest {
+  def mvnDeps = Seq(
+    mvn"com.lihaoyi::utest::0.7.10",
+    mvn"com.lihaoyi::ujson::1.3.13",
+    mvn"com.dimafeng::testcontainers-scala-core:0.41.3"
+  )
+}
+
+object requests extends Module {
+  trait RequestsJvmModule extends RequestsCrossScalaModule with RequestsPublishModule {
+    object test extends ScalaTests with RequestsTestModule
+  }
+  object jvm extends Cross[RequestsJvmModule](scalaVersions)
+
+  // trait RequestsNativeModule extends ScalaNativeModule with RequestsPublishModule {
+  //   override def scalaNativeVersion = scalaNativeVer
+  //
+  //   def mvnDeps =
+  //     super.mvnDeps() ++ Seq(mvn"com.github.lolgab::scala-native-crypto::0.1.0")
+  //
+  //   object test extends ScalaNativeTests with RequestsTestModule
+  // }
+  // object native extends Cross[RequestsNativeModule](scalaVersions)
+}
